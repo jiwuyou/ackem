@@ -9,6 +9,7 @@ import {
 } from '../lib/chatSend'
 import { insertSearchCardIntoRows, insertMemoryAuditCardIntoRows } from '../lib/chatStreamRows'
 import { useEmbeddingReadiness } from './useEmbeddingReadiness'
+import { ackemClient } from '../api'
 
 export function useChatSend() {
   const settings = useAppStore((s) => s.settings)
@@ -73,10 +74,10 @@ export function useChatSend() {
       }
 
       const bindStreamHandlers = () => {
-        window.ackem.onChatStreamStart(() => {
+        ackemClient.onChatStreamStart(() => {
           streamBuf.current = ''
         })
-        window.ackem.onChatWaveStart(({ newBubble }) => {
+        ackemClient.onChatWaveStart(({ newBubble }) => {
           if (!newBubble) {
             streamBuf.current = ''
             return
@@ -88,25 +89,25 @@ export function useChatSend() {
             return n
           })
         })
-        window.ackem.onChatChunk((c) => {
+        ackemClient.onChatChunk((c) => {
           streamBuf.current += c
           patchAssistant(streamBuf.current)
         })
-        window.ackem.onChatWaveEnd(({ text }) => {
+        ackemClient.onChatWaveEnd(({ text }) => {
           if (text) {
             streamBuf.current = text
             patchAssistant(text)
           }
         })
-        window.ackem.onChatReplace((txt) => {
+        ackemClient.onChatReplace((txt) => {
           streamBuf.current = txt
           patchAssistant(txt)
         })
-        window.ackem.onChatDone(() => {
+        ackemClient.onChatDone(() => {
           streamingIdx.current = null
-          void window.ackem.saveChatHistory(useAppStore.getState().chatRows)
+          void ackemClient.saveChatHistory(useAppStore.getState().chatRows)
         })
-        window.ackem.onChatError((err) => {
+        ackemClient.onChatError((err) => {
           if (String(err) === 'EMBEDDING_WARMING') {
             pushToast(t('chat.embedding.warming'))
             return
@@ -114,10 +115,10 @@ export function useChatSend() {
           pushToast(err)
           patchAssistant(t('chat.error', { error: String(err) }))
         })
-        window.ackem.onChatSearchCard((payload) => {
+        ackemClient.onChatSearchCard((payload) => {
           setRows((prev) => insertSearchCardIntoRows(prev, payload, streamingIdx))
         })
-        window.ackem.onChatMemoryAudit((payload) => {
+        ackemClient.onChatMemoryAudit((payload) => {
           setRows((prev) => insertMemoryAuditCardIntoRows(prev, payload, streamingIdx))
         })
       }
@@ -125,7 +126,7 @@ export function useChatSend() {
       try {
         bindStreamHandlers()
 
-        const built = await window.ackem.buildContext(
+        const built = await ackemClient.buildContext(
           buildChatContextRequest({
             clean,
             userLine,
@@ -156,7 +157,7 @@ export function useChatSend() {
         if (built.skipLlm && built.redlineReply) {
           patchAssistant(built.redlineReply ?? '')
           streamingIdx.current = null
-          void window.ackem.saveChatHistory(useAppStore.getState().chatRows)
+          void ackemClient.saveChatHistory(useAppStore.getState().chatRows)
           return
         }
 
@@ -166,7 +167,7 @@ export function useChatSend() {
           return
         }
 
-        await window.ackem.startChat({
+        await ackemClient.startChat({
           messages: built.messages,
           settings: settings!,
           turnId: built.turnId,

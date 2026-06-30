@@ -40,13 +40,133 @@ import {
   resolveDataRoot
 } from './shared'
 
+export function handleMemoryList(): ReturnType<FactStore['listActive']> {
+  const root = currentDataRoot()
+  const store = new FactStore(defaultFactsPath(root))
+  store.load()
+  return store.listActive()
+}
+
+export function handleArchiveList(): {
+  files: Array<{ path: string; name: string; isDir: boolean; size: number }>
+  domains: string[]
+  lastExportAt: string | null
+} {
+  const root = currentDataRoot()
+  const archiveDir = join(root, 'memory', 'archive')
+  if (!existsSync(archiveDir)) return { files: [], domains: [], lastExportAt: null }
+
+  const walk = (
+    dir: string,
+    base: string
+  ): Array<{ path: string; name: string; isDir: boolean; size: number }> => {
+    const entries: Array<{ path: string; name: string; isDir: boolean; size: number }> = []
+    if (!existsSync(dir)) return entries
+    for (const name of readdirSync(dir)) {
+      if (name === '_meta.json') continue
+      const full = join(dir, name)
+      const st = statSync(full)
+      entries.push({
+        path: join(base, name).replace(/\\/g, '/'),
+        name,
+        isDir: st.isDirectory(),
+        size: st.size
+      })
+    }
+    return entries.sort((a, b) =>
+      a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.localeCompare(b.name)
+    )
+  }
+
+  const domains = walk(archiveDir, '')
+  const allFiles = domains.filter((d) => d.isDir).flatMap((d) => walk(join(archiveDir, d.name), d.name))
+
+  let lastExportAt: string | null = null
+  const metaPath = join(archiveDir, '_meta.json')
+  if (existsSync(metaPath)) {
+    try {
+      const meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
+      lastExportAt = meta.lastExportAt ?? null
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return {
+    files: [...domains.filter((d) => !d.isDir), ...allFiles],
+    domains: domains.filter((d) => d.isDir).map((d) => d.name),
+    lastExportAt
+  }
+}
+
+export function handleDiaryList(): {
+  entries: Array<{
+    date: string
+    path: string
+    size: number
+    type: string
+    tier?: string
+    gapHours?: number
+  }>
+  pendingSnapshots: string[]
+} {
+  const root = currentDataRoot()
+  const diaryDir = join(root, 'diary')
+  if (!existsSync(diaryDir)) return { entries: [], pendingSnapshots: [] }
+
+  let meta: Record<string, { type?: string; tier?: string; gapHours?: number }> = {}
+  const metaPath = join(diaryDir, 'meta.json')
+  if (existsSync(metaPath)) {
+    try {
+      meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const entries: Array<{
+    date: string
+    path: string
+    size: number
+    type: string
+    tier?: string
+    gapHours?: number
+  }> = []
+  const existingDates = new Set<string>()
+  for (const name of readdirSync(diaryDir)) {
+    const match = name.match(/^(\d{4}-\d{2}-\d{2})\.md$/)
+    if (!match) continue
+    const date = match[1]
+    existingDates.add(date)
+    const full = join(diaryDir, name)
+    try {
+      const m = meta[date]
+      entries.push({
+        date,
+        path: name,
+        size: statSync(full).size,
+        type: m?.type ?? 'daily',
+        tier: m?.tier,
+        gapHours: m?.gapHours
+      })
+    } catch {
+      /* skip */
+    }
+  }
+  entries.sort((a, b) => b.date.localeCompare(a.date))
+
+  const pendingSnapshots: string[] = []
+  for (const name of readdirSync(diaryDir)) {
+    const m = name.match(/^\.snapshot-(\d{4}-\d{2}-\d{2})\.json$/)
+    if (m && !existingDates.has(m[1])) pendingSnapshots.push(m[1])
+  }
+  pendingSnapshots.sort((a, b) => b.localeCompare(a))
+
+  return { entries, pendingSnapshots }
+}
+
 export function registerMemoryIpc(): void {
-  ipcMain.handle('memory:list', () => {
-    const root = currentDataRoot()
-    const store = new FactStore(defaultFactsPath(root))
-    store.load()
-    return store.listActive()
-  })
+  ipcMain.handle('memory:list', () => handleMemoryList())
 
   ipcMain.handle(
     'memory:update',
@@ -221,53 +341,7 @@ export function registerMemoryIpc(): void {
     return exportMemoryArchive(root, store, epStore)
   })
 
-  ipcMain.handle('archive:list', () => {
-    const root = currentDataRoot()
-    const archiveDir = join(root, 'memory', 'archive')
-    if (!existsSync(archiveDir)) return { files: [], domains: [], lastExportAt: null }
-
-    const walk = (
-      dir: string,
-      base: string
-    ): Array<{ path: string; name: string; isDir: boolean; size: number }> => {
-      const entries: Array<{ path: string; name: string; isDir: boolean; size: number }> = []
-      if (!existsSync(dir)) return entries
-      for (const name of readdirSync(dir)) {
-        if (name === '_meta.json') continue
-        const full = join(dir, name)
-        const st = statSync(full)
-        entries.push({
-          path: join(base, name).replace(/\\/g, '/'),
-          name,
-          isDir: st.isDirectory(),
-          size: st.size
-        })
-      }
-      return entries.sort((a, b) =>
-        a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.localeCompare(b.name)
-      )
-    }
-
-    const domains = walk(archiveDir, '')
-    const allFiles = domains.filter((d) => d.isDir).flatMap((d) => walk(join(archiveDir, d.name), d.name))
-
-    let lastExportAt: string | null = null
-    const metaPath = join(archiveDir, '_meta.json')
-    if (existsSync(metaPath)) {
-      try {
-        const meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
-        lastExportAt = meta.lastExportAt ?? null
-      } catch {
-        /* ignore */
-      }
-    }
-
-    return {
-      files: [...domains.filter((d) => !d.isDir), ...allFiles],
-      domains: domains.filter((d) => d.isDir).map((d) => d.name),
-      lastExportAt
-    }
-  })
+  ipcMain.handle('archive:list', () => handleArchiveList())
 
   ipcMain.handle('archive:read', (_e, relPath: string) => {
     const root = currentDataRoot()
@@ -372,61 +446,7 @@ export function registerMemoryIpc(): void {
     return { ok: true, path: join(root, 'diary', `${date}.md`), writeMode: result.writeMode }
   })
 
-  ipcMain.handle('diary:list', () => {
-    const root = currentDataRoot()
-    const diaryDir = join(root, 'diary')
-    if (!existsSync(diaryDir)) return { entries: [], pendingSnapshots: [] }
-
-    let meta: Record<string, { type?: string; tier?: string; gapHours?: number }> = {}
-    const metaPath = join(diaryDir, 'meta.json')
-    if (existsSync(metaPath)) {
-      try {
-        meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
-      } catch {
-        /* ignore */
-      }
-    }
-
-    const entries: Array<{
-      date: string
-      path: string
-      size: number
-      type: string
-      tier?: string
-      gapHours?: number
-    }> = []
-    const existingDates = new Set<string>()
-    for (const name of readdirSync(diaryDir)) {
-      const match = name.match(/^(\d{4}-\d{2}-\d{2})\.md$/)
-      if (!match) continue
-      const date = match[1]
-      existingDates.add(date)
-      const full = join(diaryDir, name)
-      try {
-        const m = meta[date]
-        entries.push({
-          date,
-          path: name,
-          size: statSync(full).size,
-          type: m?.type ?? 'daily',
-          tier: m?.tier,
-          gapHours: m?.gapHours
-        })
-      } catch {
-        /* skip */
-      }
-    }
-    entries.sort((a, b) => b.date.localeCompare(a.date))
-
-    const pendingSnapshots: string[] = []
-    for (const name of readdirSync(diaryDir)) {
-      const m = name.match(/^\.snapshot-(\d{4}-\d{2}-\d{2})\.json$/)
-      if (m && !existingDates.has(m[1])) pendingSnapshots.push(m[1])
-    }
-    pendingSnapshots.sort((a, b) => b.localeCompare(a))
-
-    return { entries, pendingSnapshots }
-  })
+  ipcMain.handle('diary:list', () => handleDiaryList())
 
   ipcMain.handle('diary:read', (_e, date: string) => {
     const root = currentDataRoot()

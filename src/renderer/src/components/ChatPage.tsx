@@ -35,6 +35,7 @@ import type { MemoryAuditCardPayload } from '../../../shared/memoryAudit'
 import { insertSearchCardIntoRows, insertMemoryAuditCardIntoRows } from '../lib/chatStreamRows'
 import { InvestigationProgressBar } from './InvestigationProgressBar'
 import { DesktopAgentDock } from './DesktopAgentDock'
+import { ackemClient } from '../api'
 import type { InvestigationProgressPayload } from '../../../shared/investigation'
 import type { TaskPlanProgressPayload } from '../../../shared/desktopAgentTaskPlan'
 import {
@@ -57,7 +58,7 @@ type PendingDispatchContext = {
 }
 
 function syncDispatchTriggerFromBuilt(
-  built: Awaited<ReturnType<typeof window.ackem.buildContext>>
+  built: Awaited<ReturnType<typeof ackemClient.buildContext>>
 ): void {
   useAppStore.getState().setDispatchTriggerStatus(built.dispatchTriggered ?? null)
 }
@@ -202,7 +203,7 @@ export function ChatPage(): JSX.Element {
                 ...prev,
                 { kind: 'message', role: 'assistant', content: opening.text.trim() }
               ])
-              void window.ackem.saveChatHistory(useAppStore.getState().chatRows)
+              void ackemClient.saveChatHistory(useAppStore.getState().chatRows)
             }
           } catch (e) {
             pushToast(e instanceof Error ? e.message : String(e))
@@ -263,14 +264,14 @@ export function ChatPage(): JSX.Element {
   }, [])
 
   const bindChatStreamHandlers = useCallback(() => {
-    window.ackem.onChatStreamStart(() => {
+    ackemClient.onChatStreamStart(() => {
       setActivityLabel(null)
       setInvestigationProgress(null)
       if (!useAppStore.getState().agentBusy) {
         setTaskPlanProgress(null)
       }
     })
-    window.ackem.onChatWaveStart(({ newBubble }) => {
+    ackemClient.onChatWaveStart(({ newBubble }) => {
       setActivityLabel(null)
       if (!newBubble) {
         streamBuf.current = ''
@@ -283,18 +284,18 @@ export function ChatPage(): JSX.Element {
         return n
       })
     })
-    window.ackem.onChatChunk((c) => {
+    ackemClient.onChatChunk((c) => {
       setActivityLabel(null)
       streamBuf.current += c
       patchStreamingAssistant(streamBuf.current)
     })
-    window.ackem.onChatWaveEnd(({ text }) => {
+    ackemClient.onChatWaveEnd(({ text }) => {
       if (text) {
         streamBuf.current = text
         patchStreamingAssistant(text)
       }
     })
-    window.ackem.onChatReplace((text) => {
+    ackemClient.onChatReplace((text) => {
       setActivityLabel(null)
       setInvestigationProgress(null)
       if (!useAppStore.getState().agentBusy) {
@@ -303,20 +304,20 @@ export function ChatPage(): JSX.Element {
       streamBuf.current = text
       patchStreamingAssistant(text)
     })
-    window.ackem.onChatStatus((text) => {
+    ackemClient.onChatStatus((text) => {
       const label = normalizeChatActivityLabel(text)
       setActivityLabel(label || null)
     })
-    window.ackem.onInvestigationProgress((payload) => {
+    ackemClient.onInvestigationProgress((payload) => {
       setInvestigationProgress(payload)
     })
-    window.ackem.onTaskPlanProgress((payload) => {
+    ackemClient.onTaskPlanProgress((payload) => {
       setTaskPlanProgress(payload)
     })
-    window.ackem.onChatSearchCard((payload) => {
+    ackemClient.onChatSearchCard((payload) => {
       insertSearchCard(payload)
     })
-    window.ackem.onChatMemoryAudit((payload) => {
+    ackemClient.onChatMemoryAudit((payload) => {
       insertMemoryAuditCard(payload)
     })
   }, [insertMemoryAuditCard, insertSearchCard, patchStreamingAssistant, setRows])
@@ -337,7 +338,7 @@ export function ChatPage(): JSX.Element {
         } else {
           next.push({ kind: 'message', role: 'assistant', content })
         }
-        void window.ackem.saveChatHistory(next)
+        void ackemClient.saveChatHistory(next)
         return next
       })
     },
@@ -384,7 +385,7 @@ export function ChatPage(): JSX.Element {
   }, [activeSessionId, setAgentBusy, appendTaskDeliveryToChat])
 
   useEffect(() => {
-    void window.ackem
+    void ackemClient
       .getState()
       .then((raw) => {
         const s = raw as { emotion?: { primaryLabel?: string; aff?: number } }
@@ -420,9 +421,9 @@ export function ChatPage(): JSX.Element {
   }, [rows])
 
   useEffect(() => {
-    void window.ackem?.ensureLayout()
+    void ackemClient.ensureLayout().catch(() => {})
     // 加载上次的聊天记录
-    void window.ackem?.loadChatHistory().then((history: unknown[]) => {
+    void ackemClient.loadChatHistory().then((history: unknown[]) => {
       if (!history?.length) return
       const normalized = history.map(normalizeChatRow).filter((r): r is ChatRow => r != null)
       if (normalized.length > 0) setRows(normalized)
@@ -431,7 +432,7 @@ export function ChatPage(): JSX.Element {
 
   // Load session list
   useEffect(() => {
-    void window.ackem?.sessionList().then(list => {
+    void ackemClient.sessionList().then(list => {
       if (list && list.length > 0) setSessions(list)
     }).catch(() => {})
   }, [activeSessionId])
@@ -468,13 +469,13 @@ export function ChatPage(): JSX.Element {
 
   const runChatFromBuilt = useCallback(
     async (
-      built: Awaited<ReturnType<typeof window.ackem.buildContext>>,
+      built: Awaited<ReturnType<typeof ackemClient.buildContext>>,
       awakeningHint?: string
     ) => {
       if (!settings) return
 
       bindChatStreamHandlers()
-      window.ackem.onChatDone((meta) => {
+      ackemClient.onChatDone((meta) => {
         setActivityLabel(null)
         setInvestigationProgress(null)
         clearStreamingAssistantIndex()
@@ -482,9 +483,9 @@ export function ChatPage(): JSX.Element {
           pushToast(t('chat.memoryWrite', { writes: meta.memoryWrites.join('; ') }))
         }
         incrementTurn()
-        void window.ackem.saveChatHistory(useAppStore.getState().chatRows)
+        void ackemClient.saveChatHistory(useAppStore.getState().chatRows)
       })
-      window.ackem.onChatError((err) => {
+      ackemClient.onChatError((err) => {
         setActivityLabel(null)
         setInvestigationProgress(null)
         if (String(err) === 'EMBEDDING_WARMING') {
@@ -499,7 +500,7 @@ export function ChatPage(): JSX.Element {
         patchStreamingAssistant(built.redlineReply ?? '')
         clearStreamingAssistantIndex()
         incrementTurn()
-        void window.ackem.saveChatHistory(useAppStore.getState().chatRows)
+        void ackemClient.saveChatHistory(useAppStore.getState().chatRows)
         return
       }
 
@@ -514,7 +515,7 @@ export function ChatPage(): JSX.Element {
         return
       }
 
-      await window.ackem.startChat({
+      await ackemClient.startChat({
         messages: built.messages,
         settings,
         turnId: built.turnId,
@@ -592,7 +593,7 @@ export function ChatPage(): JSX.Element {
       bindChatStreamHandlers()
 
       try {
-        const built = await window.ackem.buildContext({
+        const built = await ackemClient.buildContext({
           userText: ctx.userText,
           explicitRel: ctx.explicitRel,
           recentMessages: ctx.recent,
@@ -628,7 +629,7 @@ export function ChatPage(): JSX.Element {
     const onWinFocus = () => focusChatInput()
     window.addEventListener('focus', onWinFocus)
     // 主进程 BrowserWindow focus 事件也会通过 IPC 转发到此处
-    window.ackem?.onWindowFocused(() => focusChatInput())
+    ackemClient.onWindowFocused(() => focusChatInput())
     return () => window.removeEventListener('focus', onWinFocus)
   }, [focusChatInput])
 
@@ -667,7 +668,7 @@ export function ChatPage(): JSX.Element {
       bindChatStreamHandlers()
 
       try {
-        const built = await window.ackem.buildContext({
+        const built = await ackemClient.buildContext({
           userText: t('chat.archiveSilent'),
           systemHint,
           recentMessages: prevRows
@@ -679,19 +680,19 @@ export function ChatPage(): JSX.Element {
         })
         syncDispatchTriggerFromBuilt(built)
 
-        window.ackem.onChatDone(() => {
+        ackemClient.onChatDone(() => {
           clearStreamingAssistantIndex()
           incrementTurn()
           // 自动保存聊天记录
-          void window.ackem.saveChatHistory(useAppStore.getState().chatRows)
+          void ackemClient.saveChatHistory(useAppStore.getState().chatRows)
         })
-        window.ackem.onChatError((err) => {
+        ackemClient.onChatError((err) => {
           if (String(err) === 'EMBEDDING_WARMING') {
             pushToast(t('chat.embedding.warming'))
             return
           }
           pushToast(err)
-          void window.ackem.saveChatHistory(useAppStore.getState().chatRows)
+          void ackemClient.saveChatHistory(useAppStore.getState().chatRows)
           patchStreamingAssistant(t('chat.error', { error: String(err) }))
         })
 
@@ -699,7 +700,7 @@ export function ChatPage(): JSX.Element {
           patchStreamingAssistant(built.redlineReply ?? '')
           clearStreamingAssistantIndex()
         } else {
-          await window.ackem.startChat({
+          await ackemClient.startChat({
             messages: built.messages,
             settings,
             turnId: built.turnId,
@@ -768,7 +769,7 @@ export function ChatPage(): JSX.Element {
     bindChatStreamHandlers()
 
     try {
-      const built = await window.ackem.buildContext(
+      const built = await ackemClient.buildContext(
         buildChatContextRequest({
           clean,
           userLine,
@@ -874,12 +875,12 @@ export function ChatPage(): JSX.Element {
                 const newId = e.target.value
                 if (newId === activeSessionId) return
                 try {
-                  const r = await window.ackem.sessionSwitch(newId)
+                  const r = await ackemClient.sessionSwitch(newId)
                   if (r.ok && r.settings) {
                     useAppStore.getState().setSettings(r.settings)
                     useAppStore.getState().resetChat()
                     turnRef.current = 0
-                    const history = await window.ackem.loadChatHistory()
+                    const history = await ackemClient.loadChatHistory()
                     if (history?.length) {
                       const normalized = history
                         .map(normalizeChatRow)
@@ -1015,9 +1016,11 @@ export function ChatPage(): JSX.Element {
               <div className="settings-callout-warn mx-auto mb-3 max-w-[920px] text-sm">
                 <div>{t('chat.embedding.warming')}</div>
                 <div className="mt-0.5 text-xs opacity-90">
-                  {t('chat.embedding.warmingDetail', {
-                    phase: t(`chat.embedding.phase.${embeddingReadiness!.phase}`),
-                  })}
+                  {embeddingReadiness?.error
+                    ? `聊天后端尚未就绪：${embeddingReadiness.error}`
+                    : t('chat.embedding.warmingDetail', {
+                        phase: t(`chat.embedding.phase.${embeddingReadiness!.phase}`),
+                      })}
                 </div>
               </div>
             )}

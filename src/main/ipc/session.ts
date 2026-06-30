@@ -15,12 +15,14 @@ import {
   saveSettings
 } from './shared'
 
+export function handleSessionList(): ReturnType<typeof loadSessionsFile> {
+  const root = currentDataRoot()
+  ensureDataLayout(root)
+  return loadSessionsFile(root)
+}
+
 export function registerSessionIpc(): void {
-  ipcMain.handle('session:list', () => {
-    const root = currentDataRoot()
-    ensureDataLayout(root)
-    return loadSessionsFile(root)
-  })
+  ipcMain.handle('session:list', () => handleSessionList())
 
   ipcMain.handle('session:create', (_e, name: string) => {
     const root = currentDataRoot()

@@ -24,8 +24,9 @@ import { useAppStore, type Tab } from './store/appStore'
 import { useUiStore } from './store/uiStore'
 import type { PermissionRequestPayload } from '../../shared/openforuPermissions'
 import { t, preloadI18n } from './lib/i18n'
-import { isAckemPreloadAvailable, formatMissingPreloadError, formatBootConnectingMessage } from './lib/rendererBoot'
+import { isAckemRendererRuntimeAvailable, formatMissingRuntimeError, formatBootConnectingMessage } from './lib/rendererBoot'
 import { dismissBootSplash, setBootSplashStatus, signalBootSplashReady } from './lib/bootSplash'
+import { ackemClient, installAckemWebFallback } from './api'
 
 function MemoryRouter(): JSX.Element {
   const [view, setView] = useState<'archive' | 'search' | 'timeline' | 'import' | 'kggraph' | 'assoc' | 'heatmap' | 'decay'>('archive')
@@ -105,20 +106,21 @@ export default function App(): JSX.Element {
   useEffect(() => {
     void (async () => {
       try {
+        installAckemWebFallback()
         await preloadI18n()
-        if (!isAckemPreloadAvailable()) {
-          setBootErr(formatMissingPreloadError())
+        if (!isAckemRendererRuntimeAvailable()) {
+          setBootErr(formatMissingRuntimeError())
           return
         }
         setBootSplashStatus(
           t('boot.connecting') !== 'boot.connecting' ? t('boot.connecting') : formatBootConnectingMessage()
         )
-        const s = await window.ackem.getSettings()
+        const s = await ackemClient.getSettings()
         setSettings(s)
         setBootSplashStatus(
           t('boot.loadingSettings') !== 'boot.loadingSettings' ? t('boot.loadingSettings') : '加载配置…'
         )
-        await window.ackem.ensureLayout()
+        await ackemClient.ensureLayout()
         setBootSplashStatus(t('boot.preparing') !== 'boot.preparing' ? t('boot.preparing') : '准备界面…')
         setBootReady(true)
       } catch (e) {

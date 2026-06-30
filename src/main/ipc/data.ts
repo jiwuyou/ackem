@@ -76,8 +76,51 @@ function broadcastEmbeddingReadiness(): void {
 
 onReadinessChange(() => broadcastEmbeddingReadiness())
 
+export function handleSettingsGet(): ReturnType<typeof loadSettings> {
+  return loadSettings()
+}
+
+export function handleSettingsSet(
+  patch: Parameters<typeof saveSettings>[0]
+): ReturnType<typeof saveSettings> {
+  const safePatch = patch ?? {}
+  const prev = loadSettings()
+  const s = saveSettings(safePatch)
+  try {
+    runSettingsPostSaveHooks(prev, s, safePatch)
+  } catch (err) {
+    log.warn('settings post-save hooks failed (settings still saved)', {
+      err: err instanceof Error ? err.message : String(err)
+    })
+  }
+  return s
+}
+
+export function handleDataGetRoot(): {
+  path: string
+  relativePath: string
+  mode: ReturnType<typeof formatDataRootDisplayPaths>['mode']
+  databasePath: string
+} {
+  const s = loadSettings()
+  const display = formatDataRootDisplayPaths(s)
+  return {
+    path: display.absolutePath,
+    relativePath: display.relativePath,
+    mode: display.mode,
+    databasePath: databasePath(display.absolutePath)
+  }
+}
+
+export function handleDataEnsureLayout(): { path: string } {
+  const s = loadSettings()
+  const root = resolveDataRoot(s)
+  ensureDataLayout(root)
+  return { path: root }
+}
+
 export function registerDataIpc(): void {
-  ipcMain.handle('settings:get', () => loadSettings())
+  ipcMain.handle('settings:get', () => handleSettingsGet())
   ipcMain.handle('canon:get', () => ({
     name: ACKEM_CANON.name,
     birthDate: ACKEM_CANON.birthDate,
@@ -101,18 +144,9 @@ export function registerDataIpc(): void {
       })),
     }
   })
-  ipcMain.handle('settings:set', (_e, patch: Parameters<typeof saveSettings>[0]) => {
-    const prev = loadSettings()
-    const s = saveSettings(patch)
-    try {
-      runSettingsPostSaveHooks(prev, s, patch)
-    } catch (err) {
-      log.warn('settings post-save hooks failed (settings still saved)', {
-        err: err instanceof Error ? err.message : String(err)
-      })
-    }
-    return s
-  })
+  ipcMain.handle('settings:set', (_e, patch: Parameters<typeof saveSettings>[0]) =>
+    handleSettingsSet(patch)
+  )
 
   // ═══ i18n ═══
   ipcMain.handle('i18n:t', (_e, key: string, params?: Record<string, string | number>) => {
@@ -145,23 +179,9 @@ export function registerDataIpc(): void {
     }
   })
 
-  ipcMain.handle('data:getRoot', () => {
-    const s = loadSettings()
-    const display = formatDataRootDisplayPaths(s)
-    return {
-      path: display.absolutePath,
-      relativePath: display.relativePath,
-      mode: display.mode,
-      databasePath: databasePath(display.absolutePath)
-    }
-  })
+  ipcMain.handle('data:getRoot', () => handleDataGetRoot())
 
-  ipcMain.handle('data:ensureLayout', () => {
-    const s = loadSettings()
-    const root = resolveDataRoot(s)
-    ensureDataLayout(root)
-    return { path: root }
-  })
+  ipcMain.handle('data:ensureLayout', () => handleDataEnsureLayout())
 
   ipcMain.handle('shell:openData', async () => {
     const root = currentDataRoot()

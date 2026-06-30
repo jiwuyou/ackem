@@ -1,8 +1,11 @@
-/**
- * FIX-036 — 检测是否在浏览器直开 Vite（无 Electron preload）
- */
+import { getAckemRuntime, isAckemRuntimeAvailable, isElectronAckemAvailable } from '../api'
+
 export function isAckemPreloadAvailable(): boolean {
-  return typeof window !== 'undefined' && typeof window.ackem !== 'undefined'
+  return isElectronAckemAvailable()
+}
+
+export function isAckemRendererRuntimeAvailable(): boolean {
+  return isAckemRuntimeAvailable()
 }
 
 export function formatMissingPreloadError(): string {
@@ -16,12 +19,25 @@ export function formatMissingPreloadError(): string {
   return zh
 }
 
+export function formatMissingRuntimeError(): string {
+  const en =
+    'Ackem runtime is unavailable. In Electron, check preload errors in DevTools. In Web mode, start the local Ackem Web service and open its served URL.'
+  const zh =
+    '未检测到 Ackem 运行时。若在 Electron 内请检查 preload 是否报错；若使用 Web 模式，请先启动本机 Ackem Web 服务，并打开它提供的页面地址。'
+  if (typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('en')) {
+    return en
+  }
+  return zh
+}
+
 export const BOOT_CONNECTING_ZH = '正在连接主进程…'
 export const BOOT_CONNECTING_EN = 'Connecting to main process…'
+export const BOOT_CONNECTING_WEB_ZH = '正在连接本机 Web 服务…'
+export const BOOT_CONNECTING_WEB_EN = 'Connecting to local Web service…'
 
 export function formatBootConnectingMessage(): string {
   if (typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('en')) {
-    return BOOT_CONNECTING_EN
+    return getAckemRuntime() === 'web' ? BOOT_CONNECTING_WEB_EN : BOOT_CONNECTING_EN
   }
-  return BOOT_CONNECTING_ZH
+  return getAckemRuntime() === 'web' ? BOOT_CONNECTING_WEB_ZH : BOOT_CONNECTING_ZH
 }

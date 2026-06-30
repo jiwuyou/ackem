@@ -148,6 +148,50 @@ function applyDispatchToPre(pre: PreLlmResult, dispatchResult?: DispatchResult):
   }
 }
 
+export function handleChatLoadHistory(): unknown[] {
+  const root = currentDataRoot()
+  const sid = currentSessionId()
+  const fromDb = loadChatHistoryFromDb(root, sid)
+  if (fromDb.length > 0) return fromDb
+  const file = join(root, 'companion', `chat-history-${sid}.json`)
+  if (!existsSync(file)) return []
+  try {
+    const rows = JSON.parse(readFileSync(file, 'utf-8')) as unknown[]
+    if (Array.isArray(rows) && rows.length > 0) {
+      saveChatHistoryToDb(root, sid, rows)
+    }
+    return Array.isArray(rows) ? rows : []
+  } catch {
+    return []
+  }
+}
+
+export function handleChatSaveHistory(rows: unknown[]): void {
+  if (!Array.isArray(rows)) {
+    throw new Error('chat:saveHistory requires rows array')
+  }
+  const root = currentDataRoot()
+  const dir = join(root, 'companion')
+  const sid = currentSessionId()
+  mkdirSync(dir, { recursive: true })
+  const trimmed = rows.slice(-2000)
+  writeFileSync(join(dir, `chat-history-${sid}.json`), JSON.stringify(trimmed), 'utf-8')
+  saveChatHistoryToDb(root, sid, trimmed)
+}
+
+export function handleStateGet(): ReturnType<typeof mergeEngineState> & {
+  _reunion: { gapHours: number; active: true } | { active: false }
+} {
+  const s = loadSettings()
+  const root = resolveDataRoot(s)
+  ensureDataLayout(root)
+  const st = mergeEngineState(root, s)
+  const gapHours = (Date.now() - new Date(st.lastActive).getTime()) / 3600000
+  const shock =
+    gapHours >= 1 ? { gapHours: Math.round(gapHours), active: true as const } : { active: false as const }
+  return { ...st, _reunion: shock }
+}
+
 export function registerChatIpc(): void {
   ipcMain.handle('context:build', async (event, args: ContextBuildInvoke) => {
     if (!isEmbeddingReadyForChat()) {
@@ -916,44 +960,11 @@ export function registerChatIpc(): void {
     }
   })
 
-  ipcMain.handle('chat:loadHistory', () => {
-    const root = currentDataRoot()
-    const sid = currentSessionId()
-    const fromDb = loadChatHistoryFromDb(root, sid)
-    if (fromDb.length > 0) return fromDb
-    const file = join(root, 'companion', `chat-history-${sid}.json`)
-    if (!existsSync(file)) return []
-    try {
-      const rows = JSON.parse(readFileSync(file, 'utf-8')) as unknown[]
-      if (Array.isArray(rows) && rows.length > 0) {
-        saveChatHistoryToDb(root, sid, rows)
-      }
-      return Array.isArray(rows) ? rows : []
-    } catch {
-      return []
-    }
-  })
+  ipcMain.handle('chat:loadHistory', () => handleChatLoadHistory())
 
-  ipcMain.handle('chat:saveHistory', (_e, rows: unknown[]) => {
-    const root = currentDataRoot()
-    const dir = join(root, 'companion')
-    const sid = currentSessionId()
-    mkdirSync(dir, { recursive: true })
-    const trimmed = rows.slice(-2000)
-    writeFileSync(join(dir, `chat-history-${sid}.json`), JSON.stringify(trimmed), 'utf-8')
-    saveChatHistoryToDb(root, sid, trimmed)
-  })
+  ipcMain.handle('chat:saveHistory', (_e, rows: unknown[]) => handleChatSaveHistory(rows))
 
-  ipcMain.handle('state:get', () => {
-    const s = loadSettings()
-    const root = resolveDataRoot(s)
-    ensureDataLayout(root)
-    const st = mergeEngineState(root, s)
-    const gapHours = (Date.now() - new Date(st.lastActive).getTime()) / 3600000
-    const shock =
-      gapHours >= 1 ? { gapHours: Math.round(gapHours), active: true } : { active: false }
-    return { ...st, _reunion: shock }
-  })
+  ipcMain.handle('state:get', () => handleStateGet())
 
   ipcMain.handle('state:reset', () => {
     const s = loadSettings()

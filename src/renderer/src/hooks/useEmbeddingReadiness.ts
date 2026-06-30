@@ -3,6 +3,18 @@ import {
   isEmbeddingReadyForChat,
   type EmbeddingReadinessSnapshot,
 } from '../lib/chatSend'
+import { ackemClient } from '../api'
+
+function readinessErrorSnapshot(error: unknown): EmbeddingReadinessSnapshot {
+  return {
+    phase: 'idle',
+    progress: 0,
+    providerReady: false,
+    factEmbeddingsReady: false,
+    preLlmWarmReady: false,
+    error: error instanceof Error ? error.message : String(error)
+  }
+}
 
 export function useEmbeddingReadiness() {
   const [embeddingReadiness, setEmbeddingReadiness] = useState<EmbeddingReadinessSnapshot | null>(
@@ -13,14 +25,14 @@ export function useEmbeddingReadiness() {
     let unsub: (() => void) | undefined
     void (async () => {
       try {
-        const snap = await window.ackem.embeddingReadiness()
+        const snap = await ackemClient.embeddingReadiness()
         setEmbeddingReadiness(snap as EmbeddingReadinessSnapshot)
-      } catch {
-        /* ignore */
+      } catch (e) {
+        setEmbeddingReadiness(readinessErrorSnapshot(e))
       }
-      unsub = window.ackem.onEmbeddingReadinessChanged((snap) => {
+      unsub = ackemClient.onEmbeddingReadinessChanged((snap) => {
         setEmbeddingReadiness(snap as EmbeddingReadinessSnapshot)
-      })
+      }) ?? undefined
     })()
     return () => unsub?.()
   }, [])

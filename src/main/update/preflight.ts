@@ -1,7 +1,30 @@
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { accessSync, constants, existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { app } from 'electron'
+
+export type UpdatePreflightResult =
+  | { ok: true; installDir: string }
+  | { ok: false; reason: 'not_packaged' | 'not_writable' | 'in_zip' }
+
+export function runUpdatePreflight(): UpdatePreflightResult {
+  if (!app.isPackaged) return { ok: false, reason: 'not_packaged' }
+
+  const exePath = app.getPath('exe')
+  const normalizedExePath = exePath.toLowerCase()
+  if (normalizedExePath.includes('.zip\\') || normalizedExePath.includes('.zip/')) {
+    return { ok: false, reason: 'in_zip' }
+  }
+
+  const installDir = dirname(exePath)
+  try {
+    accessSync(installDir, constants.W_OK)
+  } catch {
+    return { ok: false, reason: 'not_writable' }
+  }
+
+  return { ok: true, installDir }
+}
 
 export function resolveLauncherExePath(installDir: string): string {
   const launcher = `${installDir}\\AckemLauncher.exe`

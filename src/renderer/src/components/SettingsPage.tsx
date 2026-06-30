@@ -11,6 +11,7 @@ import { UpdateSettingsPanel } from './settings/UpdateSettingsPanel'
 import { useAppStore } from '../store/appStore'
 import { resolveInitialTheme, toggleTheme, type ThemeMode } from '../lib/theme'
 import { isSettingsDirty, mergeSettingsDraft, prepareSettingsForSave } from '../lib/settingsForm'
+import { ackemClient } from '../api'
 import { onlyDesktopAgentSettingsChanged } from '../../../shared/settingsChange'
 import {
   clampOpenForUTemperature,
@@ -112,7 +113,7 @@ export function SettingsPage(): JSX.Element {
     async (patch: Partial<AppSettings>, toast?: string) => {
       if (!form) return
       const merged = mergeSettingsDraft(form, patch)
-      const next = await window.ackem.setSettings(merged)
+      const next = await ackemClient.setSettings(merged)
       applyPersisted(next)
       if (toast) pushToast(toast)
       return next
@@ -121,7 +122,7 @@ export function SettingsPage(): JSX.Element {
   )
 
   useEffect(() => {
-    void window.ackem.getSettings().then((s) => {
+    void ackemClient.getSettings().then((s) => {
       applyPersisted(s)
     })
   }, [applyPersisted])
@@ -184,7 +185,7 @@ export function SettingsPage(): JSX.Element {
   }) => {
     const saved = await window.ackem.personalitySet(p.id)
     setSettings(saved)
-    setForm((f) =>
+    setForm((f: AppSettings | null) =>
       f
         ? {
             ...f,
@@ -215,7 +216,7 @@ export function SettingsPage(): JSX.Element {
         form.personalityPresetId &&
         form.personalityPresetId !== p.id
       ) {
-        const st = (await window.ackem.getState()) as { counters?: { totalTurns?: number } }
+        const st = (await ackemClient.getState()) as { counters?: { totalTurns?: number } }
         if ((st?.counters?.totalTurns ?? 0) > 0) {
           pendingPersonality.current = p
           setShowPersonalityConfirm(true)
@@ -243,7 +244,7 @@ export function SettingsPage(): JSX.Element {
       return
     }
     const prev = settings ?? form
-    const next = await window.ackem.setSettings(prepareSettingsForSave(form))
+    const next = await ackemClient.setSettings(prepareSettingsForSave(form))
     applyPersisted(next)
     await window.ackem.ensureLayout()
     if (!onlyDesktopAgentSettingsChanged(prev, next)) {
@@ -266,7 +267,7 @@ export function SettingsPage(): JSX.Element {
     try {
       await window.ackem.memoryClearAll()
       resetChat()
-      await window.ackem.saveChatHistory([])
+      await ackemClient.saveChatHistory([])
       await window.ackem.rebuildIndex()
       setTab('chat')
       requestChatInputFocus()
@@ -400,7 +401,7 @@ export function SettingsPage(): JSX.Element {
             value={form.companionGender}
             onChange={(v) => {
               const gender = v as PresetGender
-              setForm((f) => (f ? { ...f, companionGender: gender } : f))
+              setForm((f: AppSettings | null) => (f ? { ...f, companionGender: gender } : f))
               void persistPatch({ companionGender: gender }).catch((err) => {
                 pushToast(err instanceof Error ? err.message : String(err))
               })
