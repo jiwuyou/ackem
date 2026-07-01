@@ -2,6 +2,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { ensureDataLayout } from '../../layout'
 import {
+  disconnectWeixin,
+  pollWeixinLogin,
+  startWeixinLogin,
+  type LoginPollResult,
+} from '../../channels/weixin/auth'
+import { loadWeixinAccount } from '../../channels/weixin/store'
+import {
   currentWebDataRoot,
   loadWebSettings,
   saveWebSettings,
@@ -48,6 +55,12 @@ type WebCompanionConfig = {
   quietMode: boolean
 }
 
+type WebWeixinPollArgs = {
+  qrcode?: unknown
+  verifyCode?: unknown
+  baseUrl?: unknown
+}
+
 type WebChannelState = {
   version: 1
   weixin: {
@@ -81,8 +94,6 @@ export const WEB_CHANNEL_WORKFLOW_CHANNELS = [
   'companion:getConfig',
   'companion:setConfig',
 ] as const
-
-const WEIXIN_WEB_UNAVAILABLE = 'weixin_web_bridge_not_configured'
 
 const DEFAULT_COMPANION_CONFIG: WebCompanionConfig = {
   idleThresholdMs: 10 * 60 * 1000,
@@ -185,15 +196,49 @@ function mutateChannelState(fn: (state: WebChannelState) => WebChannelState | vo
 
 function webWeixinStatus(state = loadChannelState()): WebWeixinStatus {
   const settings = loadWebSettings()
+  const account = loadWeixinAccount(rootWithLayout())
   return {
-    connected: false,
+    connected: Boolean(account?.token),
     enabled: settings.weixinChannelEnabled === true,
     polling: false,
     proactiveEnabled: settings.weixinProactiveEnabled !== false,
+    accountId: account?.accountId,
+    userId: account?.userId,
     lastError: state.weixin.lastError,
     tokenExpired: state.weixin.tokenExpired,
     embeddingReady: settings.embeddingActiveModel !== 'none',
   }
+}
+
+function normalizeWeixinPollArgs(args: unknown): {
+  qrcode: string
+  verifyCode?: string
+  baseUrl?: string
+} {
+  const payload = args && typeof args === 'object' ? (args as WebWeixinPollArgs) : {}
+  const qrcode = typeof payload.qrcode === 'string' ? payload.qrcode.trim() : ''
+  if (!qrcode) {
+    throw Object.assign(new Error('weixin:pollLogin requires qrcode'), { code: 'INVALID_ARGUMENT' })
+  }
+  const verifyCode = typeof payload.verifyCode === 'string' && payload.verifyCode.trim()
+    ? payload.verifyCode.trim()
+    : undefined
+  const baseUrl = typeof payload.baseUrl === 'string' && payload.baseUrl.trim()
+    ? payload.baseUrl.trim()
+    : undefined
+  return { qrcode, verifyCode, baseUrl }
+}
+
+function markWeixinPollResult(result: LoginPollResult): LoginPollResult {
+  mutateChannelState((state) => {
+    state.weixin.lastPollAt = new Date().toISOString()
+    state.weixin.lastError = result.ok ? null : result.error ?? null
+    state.weixin.tokenExpired = false
+  })
+  if (result.ok && result.account) {
+    saveWebSettings({ weixinChannelEnabled: true })
+  }
+  return result
 }
 
 function clampMs(value: unknown, fallback: number, min: number, max: number): number {
@@ -359,82 +404,48 @@ function statusTextForPresence(presence: WebPresenceState): string {
   return '在你身边'
 }
 
-function placeholderQrDataUrl(): string {
-  const svg = [
-    '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">',
-    '<rect width="256" height="256" fill="white"/>',
-    '<rect x="16" y="16" width="224" height="224" rx="12" fill="#f3f4f6" stroke="#111827" stroke-width="4"/>',
-    '<text x="128" y="112" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#111827">Weixin</text>',
-    '<text x="128" y="142" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#4b5563">Web bridge unavailable</text>',
-    '</svg>',
-  ].join('')
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-}
-
 export function handleWebWeixinGetStatus(): WebWeixinStatus {
   return webWeixinStatus()
 }
 
-export function handleWebWeixinStartLogin(): {
+export async function handleWebWeixinStartLogin(): Promise<{
   qrcode: string
   qrcodeImgContent: string
-  qrcodeScanUrl?: string
-  ok: false
-  status: string
-  error: string
-} {
+  qrcodeScanUrl: string
+}> {
+  const root = rootWithLayout()
   mutateChannelState((state) => {
     state.weixin.loginStartedAt = new Date().toISOString()
-    state.weixin.lastError = WEIXIN_WEB_UNAVAILABLE
+    state.weixin.lastError = null
     state.weixin.tokenExpired = false
   })
-  return {
-    qrcode: 'web-runtime-not-configured',
-    qrcodeImgContent: placeholderQrDataUrl(),
-    qrcodeScanUrl: undefined,
-    ok: false,
-    status: 'unavailable',
-    error: WEIXIN_WEB_UNAVAILABLE,
+  try {
+    return await startWeixinLogin(root)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    mutateChannelState((state) => {
+      state.weixin.lastError = message
+    })
+    throw Object.assign(new Error(message), { code: 'WEIXIN_LOGIN_START_FAILED' })
   }
 }
 
-export function handleWebWeixinPollLogin(): {
-  ok: boolean
-  status: string
-  needVerifyCode?: boolean
-  error?: string
-} {
-  mutateChannelState((state) => {
-    state.weixin.lastPollAt = new Date().toISOString()
-    state.weixin.lastError = WEIXIN_WEB_UNAVAILABLE
-  })
-  return {
-    ok: false,
-    status: 'unavailable',
-    needVerifyCode: false,
-    error: WEIXIN_WEB_UNAVAILABLE,
-  }
+export async function handleWebWeixinPollLogin(args: unknown): Promise<LoginPollResult> {
+  const root = rootWithLayout()
+  const payload = normalizeWeixinPollArgs(args)
+  const result = await pollWeixinLogin(root, payload.qrcode, payload.verifyCode, payload.baseUrl)
+  return markWeixinPollResult(result)
 }
 
-export function handleWebWeixinSubmitVerifyCode(): {
-  ok: boolean
-  status: string
-  needVerifyCode?: boolean
-  error?: string
-} {
-  mutateChannelState((state) => {
-    state.weixin.lastPollAt = new Date().toISOString()
-    state.weixin.lastError = WEIXIN_WEB_UNAVAILABLE
-  })
-  return {
-    ok: false,
-    status: 'unavailable',
-    needVerifyCode: false,
-    error: WEIXIN_WEB_UNAVAILABLE,
-  }
+export async function handleWebWeixinSubmitVerifyCode(args: unknown): Promise<LoginPollResult> {
+  const root = rootWithLayout()
+  const payload = normalizeWeixinPollArgs(args)
+  const result = await pollWeixinLogin(root, payload.qrcode, payload.verifyCode, payload.baseUrl)
+  return markWeixinPollResult(result)
 }
 
 export function handleWebWeixinDisconnect(): { ok: boolean } {
+  disconnectWeixin(rootWithLayout())
   saveWebSettings({ weixinChannelEnabled: false })
   mutateChannelState((state) => {
     state.weixin.lastError = null
@@ -447,7 +458,7 @@ export function handleWebWeixinSetEnabled(enabled: unknown): WebWeixinStatus {
   const next = enabled === true
   saveWebSettings({ weixinChannelEnabled: next })
   const state = mutateChannelState((draft) => {
-    draft.weixin.lastError = next ? WEIXIN_WEB_UNAVAILABLE : null
+    draft.weixin.lastError = next && !loadWeixinAccount(rootWithLayout()) ? 'weixin_account_not_bound' : null
     draft.weixin.tokenExpired = false
   })
   return webWeixinStatus(state)
@@ -465,7 +476,10 @@ export function handleWebWeixinSetProactiveEnabled(enabled: unknown): WebWeixinS
 export function handleWebWeixinRestart(): WebWeixinStatus {
   const state = mutateChannelState((draft) => {
     draft.weixin.lastRestartAt = new Date().toISOString()
-    draft.weixin.lastError = loadWebSettings().weixinChannelEnabled === true ? WEIXIN_WEB_UNAVAILABLE : null
+    draft.weixin.lastError =
+      loadWebSettings().weixinChannelEnabled === true && !loadWeixinAccount(rootWithLayout())
+        ? 'weixin_account_not_bound'
+        : null
     draft.weixin.tokenExpired = false
   })
   return webWeixinStatus(state)
@@ -509,8 +523,8 @@ export function handleWebCompanionSetConfig(patch: unknown): { ok: boolean; conf
 export const webChannelWorkflowHandlers: Readonly<Record<(typeof WEB_CHANNEL_WORKFLOW_CHANNELS)[number], WebInvokeHandler>> = {
   'weixin:getStatus': () => handleWebWeixinGetStatus(),
   'weixin:startLogin': () => handleWebWeixinStartLogin(),
-  'weixin:pollLogin': () => handleWebWeixinPollLogin(),
-  'weixin:submitVerifyCode': () => handleWebWeixinSubmitVerifyCode(),
+  'weixin:pollLogin': (args) => handleWebWeixinPollLogin(args),
+  'weixin:submitVerifyCode': (args) => handleWebWeixinSubmitVerifyCode(args),
   'weixin:disconnect': () => handleWebWeixinDisconnect(),
   'weixin:setEnabled': (enabled) => handleWebWeixinSetEnabled(enabled),
   'weixin:setProactiveEnabled': (enabled) => handleWebWeixinSetProactiveEnabled(enabled),
