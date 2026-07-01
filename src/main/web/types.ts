@@ -33,6 +33,7 @@ export type AckemWebServerOptions = {
   }
   corsOrigin?: string
   maxBodyBytes?: number
+  maxUploadBytes?: number
   allowNonLoopbackHost?: boolean
 }
 

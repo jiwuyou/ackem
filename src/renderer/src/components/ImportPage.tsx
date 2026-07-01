@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { t } from '../lib/i18n'
 import { useAppStore } from '../store/appStore'
 import { InferenceConsentDialog, type ScanEstimatePayload } from './InferenceConsentDialog'
@@ -8,6 +8,7 @@ import {
   type ImportFactDraft,
   type ImportJob,
 } from '../../../shared/documentImport'
+import { ackemClient } from '../api'
 
 type ConsentMode = 'infer' | 'memory' | null
 
@@ -29,6 +30,8 @@ const SUBCATEGORY_LABEL: Record<string, string> = {
 
 export function ImportPage(): JSX.Element {
   const pushToast = useAppStore((s) => s.pushToast)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const capabilities = ackemClient.capabilities()
   const [drag, setDrag] = useState(false)
   const [last, setLast] = useState<{ copied: string[]; errors: string[] } | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -37,6 +40,7 @@ export function ImportPage(): JSX.Element {
   const [estimate, setEstimate] = useState<ScanEstimatePayload | null>(null)
   const [dialogLoading, setDialogLoading] = useState(false)
   const [pendingPaths, setPendingPaths] = useState<string[]>([])
+  const [pathInput, setPathInput] = useState('')
   const [importJob, setImportJob] = useState<ImportJob | null>(null)
   const [disabledDrafts, setDisabledDrafts] = useState<Set<string>>(new Set())
   const [commitBusy, setCommitBusy] = useState(false)
@@ -44,14 +48,33 @@ export function ImportPage(): JSX.Element {
   const doImport = useCallback(
     async (paths: string[]) => {
       if (paths.length === 0) return
-      const r = await window.ackem.importFiles(paths)
+      const r = await ackemClient.importFiles(paths)
       setLast(r)
       setSelected(new Set(r.copied))
       setImportJob(null)
       setDisabledDrafts(new Set())
       if (r.errors.length) pushToast(r.errors[0] ?? '导入出错')
       else pushToast(`已导入 ${r.copied.length} 个文件`)
-      await window.ackem.rebuildIndex()
+      await ackemClient.rebuildIndex()
+    },
+    [pushToast]
+  )
+
+  const doBrowserUpload = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return
+      try {
+        const r = await ackemClient.importBrowserFiles(files)
+        setLast(r)
+        setSelected(new Set(r.copied))
+        setImportJob(null)
+        setDisabledDrafts(new Set())
+        if (r.errors.length) pushToast(r.errors[0] ?? '导入出错')
+        else pushToast(`已上传 ${r.copied.length} 个文件`)
+        await ackemClient.rebuildIndex()
+      } catch (e) {
+        pushToast(e instanceof Error ? e.message : String(e))
+      }
     },
     [pushToast]
   )
@@ -66,12 +89,16 @@ export function ImportPage(): JSX.Element {
       e.preventDefault()
       setDrag(false)
       const files = Array.from(e.dataTransfer?.files ?? [])
-      const paths = files.map((f) => window.ackem.getPathForFile(f)).filter(Boolean)
-      if (paths.length === 0) {
-        pushToast('未解析到本地文件路径，请使用「选择文件」。')
-        return
+      if (ackemClient.capabilities().runtime === 'electron') {
+        const paths = files.map((f) => ackemClient.getPathForFile(f)).filter(Boolean)
+        if (paths.length === 0) {
+          pushToast('未解析到本地文件路径，请使用「选择文件」。')
+          return
+        }
+        void doImport(paths)
+      } else {
+        void doBrowserUpload(files)
       }
-      void doImport(paths)
     }
     window.addEventListener('dragover', onDragOver)
     window.addEventListener('dragleave', onDragLeave)
@@ -81,11 +108,27 @@ export function ImportPage(): JSX.Element {
       window.removeEventListener('dragleave', onDragLeave)
       window.removeEventListener('drop', onDrop)
     }
-  }, [doImport, pushToast])
+  }, [doBrowserUpload, doImport, pushToast])
 
   const pick = async () => {
-    const r = await window.ackem.selectFiles()
-    await doImport(r.paths)
+    if (ackemClient.capabilities().runtime === 'electron') {
+      const r = await ackemClient.selectFiles()
+      await doImport(r.paths)
+      return
+    }
+    fileInputRef.current?.click()
+  }
+
+  const importPathsFromInput = async () => {
+    const paths = pathInput
+      .split(/\r?\n|,/)
+      .map((p) => p.trim())
+      .filter(Boolean)
+    if (paths.length === 0) {
+      pushToast('请输入 Termux/Ubuntu 中可访问的文件路径')
+      return
+    }
+    await doImport(paths)
   }
 
   const toggleSelect = (rel: string) => {
@@ -109,7 +152,7 @@ export function ImportPage(): JSX.Element {
       return
     }
     try {
-      const est = await window.ackem.profileEstimateScan(paths)
+      const est = await ackemClient.profileEstimateScan(paths)
       setEstimate(est)
       setPendingPaths(paths)
       setConsentMode(mode)
@@ -123,7 +166,7 @@ export function ImportPage(): JSX.Element {
     setDialogLoading(true)
     try {
       if (consentMode === 'infer') {
-        const r = await window.ackem.profileInferFromFiles({
+        const r = await ackemClient.profileInferFromFiles({
           relPaths: pendingPaths,
           consentAck: true,
           consentVersion: INFERENCE_CONSENT_VERSION,
@@ -134,7 +177,7 @@ export function ImportPage(): JSX.Element {
         }
         pushToast('主人六维推断完成，可在设置中查看伴侣 TISOR 建议')
       } else if (consentMode === 'memory') {
-        const r = await window.ackem.importParseDocuments({
+        const r = await ackemClient.importParseDocuments({
           relPaths: pendingPaths,
           consentAck: true,
           consentVersion: IMPORT_CONSENT_VERSION,
@@ -173,7 +216,7 @@ export function ImportPage(): JSX.Element {
     if (!importJob) return
     setCommitBusy(true)
     try {
-      const r = await window.ackem.importCommitJob({
+      const r = await ackemClient.importCommitJob({
         jobId: importJob.id,
         disabledDraftIds: [...disabledDrafts],
       })
@@ -231,13 +274,54 @@ export function ImportPage(): JSX.Element {
             ↑
           </div>
           <div className="text-center text-ink">
-            <div className="font-medium">选择 txt / md / json 文件</div>
+            <div className="font-medium">
+              {capabilities.runtime === 'web' ? '上传 txt / md / json 文件' : '选择 txt / md / json 文件'}
+            </div>
             <div className="mt-1 text-xs text-ink-muted">
               json 推荐 schema <code className="rounded bg-surface px-1">ackem.memory.bundle</code>；也支持 facts
               数组或 facts.v2 片段。
             </div>
           </div>
         </button>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept=".txt,.md,.json,text/plain,text/markdown,application/json"
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.currentTarget.files ?? [])
+            e.currentTarget.value = ''
+            void doBrowserUpload(files)
+          }}
+        />
+
+        {capabilities.runtime === 'web' && (
+          <div className="rounded-xl border border-surface-inset bg-surface-raised p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-ink">Termux/Ubuntu 路径导入</p>
+                <p className="mt-0.5 text-[11px] text-ink-muted">
+                  输入 Web 后端所在 Ubuntu 环境可访问的绝对路径或多行路径。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void importPathsFromInput()}
+                className="rounded-lg border border-surface-inset px-3 py-1.5 text-[11px] hover:border-accent/40"
+              >
+                按路径导入
+              </button>
+            </div>
+            <textarea
+              value={pathInput}
+              onChange={(e) => setPathInput(e.target.value)}
+              placeholder="/home/user/notes.md&#10;/sdcard/Download/profile.json"
+              className="field-input mt-3 min-h-20 w-full rounded-lg px-3 py-2 font-mono text-xs"
+            />
+          </div>
+        )}
 
         {copied.length > 0 && (
           <div className="rounded-xl border border-surface-inset bg-surface-raised p-4">

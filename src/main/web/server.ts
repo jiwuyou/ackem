@@ -6,6 +6,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import {
   ACKEM_WEB_EVENTS_PATH,
   ACKEM_WEB_INVOKE_PATH,
+  ACKEM_WEB_UPLOAD_IMPORT_PATHS,
   type AckemWebInvokeResponse,
 } from '../../shared/webTransport'
 import { createLogger } from '../logger'
@@ -16,12 +17,19 @@ import {
   invokeWebHandler,
   isInvokeRequest,
 } from './handlers'
+import {
+  handleWebImportUpload,
+  handleWebImportUploadFiles,
+  parseMultipartImportUpload,
+} from './services/importService'
 import type { AckemWebServerHandle, AckemWebServerOptions, WebEventListener } from './types'
 
 const log = createLogger('web-server')
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 8787
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
+const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+const CORS_ALLOW_HEADERS = 'content-type,x-ackem-filename'
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -111,7 +119,7 @@ function writeJson(
   if (corsOrigin) {
     res.setHeader('access-control-allow-origin', corsOrigin)
     res.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS')
-    res.setHeader('access-control-allow-headers', 'content-type')
+    res.setHeader('access-control-allow-headers', CORS_ALLOW_HEADERS)
   }
   res.end(payload)
 }
@@ -123,7 +131,7 @@ function writeText(res: ServerResponse, statusCode: number, text: string, corsOr
   if (corsOrigin) {
     res.setHeader('access-control-allow-origin', corsOrigin)
     res.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS')
-    res.setHeader('access-control-allow-headers', 'content-type')
+    res.setHeader('access-control-allow-headers', CORS_ALLOW_HEADERS)
   }
   res.end(text)
 }
@@ -184,7 +192,7 @@ function serveStaticFile(
   return true
 }
 
-async function readJsonBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
+async function readRequestBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
   const chunks: Buffer[] = []
   let total = 0
 
@@ -197,7 +205,11 @@ async function readJsonBody(req: IncomingMessage, maxBytes: number): Promise<unk
     chunks.push(buf)
   }
 
-  const raw = Buffer.concat(chunks).toString('utf-8').trim()
+  return Buffer.concat(chunks)
+}
+
+async function readJsonBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
+  const raw = (await readRequestBody(req, maxBytes)).toString('utf-8').trim()
   if (!raw) return null
   return JSON.parse(raw)
 }
@@ -206,6 +218,19 @@ function invokeStatus(response: AckemWebInvokeResponse): number {
   if (response.ok) return 200
   if (response.error.code === 'CHANNEL_NOT_FOUND') return 404
   if (response.error.code === 'INVALID_ARGUMENT') return 400
+  if (response.error.code === 'WEB_ELECTRON_WINDOW_ONLY') return 501
+  if (response.error.code === 'WEB_CHANNEL_PENDING') return 501
+  return 500
+}
+
+function errorStatus(error: unknown): number {
+  const code = (error as { code?: unknown })?.code
+  if (code === 'BODY_TOO_LARGE' || code === 'IMPORT_UPLOAD_TOO_LARGE' || code === 'IMPORT_SOURCE_TOO_LARGE') {
+    return 413
+  }
+  if (typeof code === 'string' && (code.startsWith('IMPORT_') || code === 'INVALID_ARGUMENT')) {
+    return 400
+  }
   return 500
 }
 
@@ -218,6 +243,15 @@ function sendWsJson(ws: WebSocket, value: unknown): void {
   }
 }
 
+function headerString(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? ''
+  return value ?? ''
+}
+
+function isUploadImportPath(path: string): boolean {
+  return (ACKEM_WEB_UPLOAD_IMPORT_PATHS as readonly string[]).includes(path)
+}
+
 export async function startAckemWebServer(
   options: AckemWebServerOptions = {}
 ): Promise<AckemWebServerHandle> {
@@ -226,6 +260,7 @@ export async function startAckemWebServer(
   const eventBus = options.eventBus ?? defaultWebEventBus
   const registry = options.registry ?? createDefaultWebHandlerRegistry(createWebEventSink(eventBus))
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+  const maxUploadBytes = options.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES
   const staticRoot = options.staticRoot ? resolve(options.staticRoot) : undefined
   const spaFallback = options.spaFallback ?? true
   const startedAt = Date.now()
@@ -245,7 +280,7 @@ export async function startAckemWebServer(
         if (options.corsOrigin) {
           res.setHeader('access-control-allow-origin', options.corsOrigin)
           res.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS')
-          res.setHeader('access-control-allow-headers', 'content-type')
+          res.setHeader('access-control-allow-headers', CORS_ALLOW_HEADERS)
         }
         res.end()
         return
@@ -290,6 +325,28 @@ export async function startAckemWebServer(
         return
       }
 
+      if (req.method === 'POST' && isUploadImportPath(path)) {
+        const contentType = headerString(req.headers['content-type'])
+        const body = await readRequestBody(req, maxUploadBytes)
+        let result: Awaited<ReturnType<typeof handleWebImportUpload>>
+        if (contentType.toLowerCase().startsWith('multipart/form-data')) {
+          result = await handleWebImportUploadFiles(
+            parseMultipartImportUpload(body, contentType),
+            maxUploadBytes
+          )
+        } else {
+          const filename = headerString(req.headers['x-ackem-filename']).trim()
+          result = await handleWebImportUpload({
+            body,
+            filename,
+            contentType: contentType || undefined,
+            maxBytes: maxUploadBytes,
+          })
+        }
+        writeJson(res, 200, { ok: true, result }, options.corsOrigin)
+        return
+      }
+
       if (staticRoot && serveStaticFile(req, res, staticRoot, path, spaFallback)) {
         return
       }
@@ -299,7 +356,7 @@ export async function startAckemWebServer(
       log.warn('request failed', { error: error instanceof Error ? error.message : String(error) })
       writeJson(
         res,
-        500,
+        errorStatus(error),
         {
           ok: false,
           error: {

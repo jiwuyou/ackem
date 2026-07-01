@@ -1,4 +1,5 @@
 import { PERMISSION_LABELS } from '../../../shared/openforuPermissions'
+import { ackemClient } from '../api'
 import { t } from '../lib/i18n'
 import { renderMarkdown } from './md'
 import {
@@ -35,6 +36,7 @@ export function ExtensionDetailPanel({
   const isCore = isCoreExtensionItem(item)
   const pending = item.pendingPermissions ?? []
   const needsGrant = pending.length > 0 && item.origin === 'uplugin'
+  const canOpenSurfaceWindow = ackemClient.capabilities().desktopUi
   const canRefine =
     (item.origin === 'uskill' || item.origin === 'uplugin') && item.id.startsWith('u/')
 
@@ -95,11 +97,11 @@ export function ExtensionDetailPanel({
               删除
             </button>
           ) : null}
-          {item.hasSurface && item.origin === 'uplugin' && isActive ? (
+          {canOpenSurfaceWindow && item.hasSurface && item.origin === 'uplugin' && isActive ? (
             <button
               type="button"
               onClick={() => {
-                void window.ackem.openforu.openSurfaceWindow(item.id).then((r) => {
+                void ackemClient.openForuOpenSurfaceWindow(item.id).then((r) => {
                   if (!r.ok) window.alert(r.message)
                 })
               }}

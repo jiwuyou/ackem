@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react'
 import type { MemoryFact, Triple, Episode, MemoryStats } from './types'
+import { ackemClient } from '../../api'
 
 export interface VizData {
   facts: MemoryFact[]
@@ -33,11 +34,11 @@ export function useMemoryVizData(): VizData {
     setLoading(true)
     try {
       const [f, t, a, e, s] = await Promise.all([
-        window.ackem.memoryList(),
-        window.ackem.kgList(),
-        window.ackem.associationList(),
-        window.ackem.episodeList(),
-        window.ackem.memoryStats()
+        ackemClient.memoryList(),
+        ackemClient.kgList(),
+        ackemClient.associationList(),
+        ackemClient.episodeList(),
+        ackemClient.memoryStats()
       ])
       setFacts(f as MemoryFact[])
       setTriples(t as Triple[])
@@ -56,7 +57,7 @@ export function useMemoryVizData(): VizData {
   }, [load])
 
   useEffect(() => {
-    const off = window.ackem.onMemoryUpdated?.(() => {
+    const off = ackemClient.onMemoryUpdated(() => {
       void load()
     })
     return () => off?.()

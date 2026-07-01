@@ -6,6 +6,7 @@ import { renderForceGraph, type ForceNode, type ForceEdge, type ForceGraphHandle
 import { VizDetailPanel } from './VizDetailPanel'
 import type { KgGraphNode, KgGraphEdge, Triple } from './types'
 import { t } from '../../lib/i18n'
+import { ackemClient } from '../../api'
 
 const DOMAIN_COLORS: Record<string, string> = {
   IDENTITY: '#E8B86D',
@@ -45,7 +46,7 @@ export function KgGraphView(): JSX.Element {
   const handleNodeClick = useCallback(async (node: ForceNode) => {
     setSelectedEntity(node.label)
     try {
-      const hops = await window.ackem.kgOneHop(node.label)
+      const hops = await ackemClient.kgOneHop(node.label)
       setOneHop(hops as Triple[])
       setSelectedTriple(null)
     } catch { setOneHop([]) }

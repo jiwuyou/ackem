@@ -1,11 +1,13 @@
 import { useCallback, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import { t } from '../lib/i18n'
+import { ackemClient } from '../api'
 
 type Hit = { score: number; id: string; relPath: string; preview: string; mtimeMs: number }
 
 export function MemoryPage(): JSX.Element {
   const pushToast = useAppStore((s) => s.pushToast)
+  const canOpenDataFolder = ackemClient.capabilities().desktopUi
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<Hit[]>([])
   const [preview, setPreview] = useState<{ rel: string; text: string } | null>(null)
@@ -17,7 +19,7 @@ export function MemoryPage(): JSX.Element {
       return
     }
     try {
-      const r = await window.ackem.search(term, 30)
+      const r = await ackemClient.search(term, 30)
       setHits(r)
     } catch (e) {
       pushToast(e instanceof Error ? e.message : String(e))
@@ -25,7 +27,7 @@ export function MemoryPage(): JSX.Element {
   }, [pushToast, q])
 
   const openPreview = async (rel: string) => {
-    const r = await window.ackem.readRel(rel)
+    const r = await ackemClient.readRel(rel)
     if (!r.ok || !r.text) {
       pushToast(r.error ?? t('viz.readFailed'))
       return
@@ -61,7 +63,7 @@ export function MemoryPage(): JSX.Element {
             <button
               type="button"
               onClick={async () => {
-                await window.ackem.rebuildIndex()
+                await ackemClient.rebuildIndex()
                 pushToast(t('viz.indexRebuilt'))
                 await runSearch()
               }}
@@ -97,13 +99,15 @@ export function MemoryPage(): JSX.Element {
             <div className="flex h-full flex-col">
               <div className="flex items-center justify-between border-b border-surface-inset px-4 py-3">
                 <div className="truncate text-xs font-medium text-ink">{preview.rel}</div>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 rounded-lg border border-surface-inset px-2 py-1 text-[11px] text-ink-muted hover:text-ink"
-                  onClick={() => void window.ackem.openDataFolder()}
-                >
-                  {t('viz.openFolder')}
-                </button>
+                {canOpenDataFolder && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-lg border border-surface-inset px-2 py-1 text-[11px] text-ink-muted hover:text-ink"
+                    onClick={() => void ackemClient.openDataFolder()}
+                  >
+                    {t('viz.openFolder')}
+                  </button>
+                )}
               </div>
               <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap p-4 text-xs leading-relaxed text-ink">
                 {preview.text}

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { SettingsStatusBadge } from './settings/settingsUi'
+import { ackemClient } from '../api'
 
 interface EmbeddingStatus {
   activeModel: string
@@ -56,7 +57,7 @@ export function EmbeddingModelSection(): JSX.Element {
 
   const refresh = useCallback(async () => {
     try {
-      const s = await window.ackem.embeddingStatus()
+      const s = await ackemClient.embeddingStatus()
       setStatus(s as EmbeddingStatus)
     } catch { /* ignore */ }
   }, [])
@@ -65,9 +66,10 @@ export function EmbeddingModelSection(): JSX.Element {
 
   // 监听下载进度
   useEffect(() => {
-    window.ackem.onEmbeddingDownloadProgress((p) => {
+    const off = ackemClient.onEmbeddingDownloadProgress((p) => {
       setProgress({ bytes: p.bytes, total: p.total, speed: p.speed })
     })
+    return () => off?.()
   }, [])
 
   const handleSwitch = async (modelId: string) => {
@@ -83,8 +85,8 @@ export function EmbeddingModelSection(): JSX.Element {
       try {
         const useBundled = modelStatus?.bundled ?? (modelId === 'bge-small-zh' || modelId === 'bge-small-en')
         const res = useBundled
-          ? await window.ackem.embeddingSwitch(modelId)
-          : await window.ackem.embeddingDownload(modelId)
+          ? await ackemClient.embeddingSwitch(modelId)
+          : await ackemClient.embeddingDownload(modelId)
         if (res.ok) {
           await refresh()
         } else {
@@ -100,7 +102,7 @@ export function EmbeddingModelSection(): JSX.Element {
       // 已下载，直接切换
       setSwitching(modelId)
       try {
-        const res = await window.ackem.embeddingSwitch(modelId)
+        const res = await ackemClient.embeddingSwitch(modelId)
         if (res.ok) {
           await refresh()
         } else {
@@ -116,7 +118,7 @@ export function EmbeddingModelSection(): JSX.Element {
 
   const handleCancel = async (modelId: string) => {
     try {
-      await window.ackem.embeddingDownloadCancel(modelId)
+      await ackemClient.embeddingDownloadCancel(modelId)
     } catch { /* ignore */ }
     setDownloading(null)
     setProgress(null)

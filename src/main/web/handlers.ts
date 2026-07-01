@@ -1,11 +1,14 @@
-import {
-  ACKEM_WEB_EVENTS_PATH,
-  ACKEM_WEB_INVOKE_PATH,
-  type AckemWebCapabilities,
-  type AckemWebInvokeError,
-  type AckemWebInvokeRequest,
-  type AckemWebInvokeResponse,
+import type {
+  AckemWebCapabilities,
+  AckemWebInvokeError,
+  AckemWebInvokeRequest,
+  AckemWebInvokeResponse,
 } from '../../shared/webTransport'
+import {
+  buildWebCapabilities,
+  createWebChannelError,
+  findWebChannelContract,
+} from './contracts'
 import {
   handleWebArchiveList,
   handleWebChatLoadHistory,
@@ -25,8 +28,22 @@ import {
   handleWebSettingsSet,
   handleWebStateGet,
 } from './runtime'
-import { handleWebChatStart, handleWebContextBuild, type WebContextBuildArgs } from './chatRuntime'
+import {
+  handleWebChatStart,
+  handleWebContextBuild,
+  registerWebChatProbeHandlers,
+  type WebContextBuildArgs,
+} from './chatRuntime'
 import { defaultWebEventSink } from './events'
+import { registerWebChannelWorkflowHandlers } from './services/channelWorkflowService'
+import { registerWebDataWorkflowHandlers } from './services/dataWorkflowService'
+import { registerWebEmbeddingWorkflowHandlers } from './services/embeddingWorkflowService'
+import { registerWebExtensionWorkflowHandlers } from './services/extensionWorkflowService'
+import { registerWebGamemodeWorkflowHandlers } from './services/gamemodeWorkflowService'
+import { handleWebImportFromPath, type WebImportFromPathInput } from './services/importService'
+import { registerWebOpenForUWorkflowHandlers } from './services/openforuWorkflowService'
+import { registerWebSystemWorkflowHandlers } from './services/systemWorkflowService'
+import { registerWebVoiceWorkflowHandlers } from './services/voiceWorkflowService'
 import type { AppSettings } from '../../shared/types'
 import type { Locale } from '../i18n/types'
 import type { WebEventSink, WebHandlerRegistry, WebInvokeHandler } from './types'
@@ -34,9 +51,12 @@ import type { WebEventSink, WebHandlerRegistry, WebInvokeHandler } from './types
 export const WEB_UNSUPPORTED_CHANNELS = [
   'dialog:selectFiles',
   'shell:openData',
+  'app:reload',
+  'surface:*',
   'ui:*',
   'pet:*',
-  'update:*',
+  'tray:*',
+  'openforu:surface:open',
 ] as const
 
 function assertPlainObject(value: unknown, channel: string): Record<string, unknown> {
@@ -87,6 +107,17 @@ export function createDefaultWebHandlerRegistry(eventSink: WebEventSink = defaul
   registry.set('i18n:getLocale', () => handleWebI18nGetLocale())
   registry.set('i18n:setLocale', (locale) => handleWebI18nSetLocale(locale as Locale))
   registry.set('i18n:getAllResources', () => handleWebI18nGetAllResources())
+  registry.set('import:fromPath', (input) => handleWebImportFromPath(input as WebImportFromPathInput))
+  registry.set('import:files', (paths) => handleWebImportFromPath(paths as WebImportFromPathInput))
+  registerWebChatProbeHandlers(registry)
+  registerWebDataWorkflowHandlers(registry)
+  registerWebEmbeddingWorkflowHandlers(registry)
+  registerWebSystemWorkflowHandlers(registry)
+  registerWebVoiceWorkflowHandlers(registry)
+  registerWebChannelWorkflowHandlers(registry)
+  registerWebExtensionWorkflowHandlers(registry)
+  registerWebGamemodeWorkflowHandlers(registry)
+  registerWebOpenForUWorkflowHandlers(registry, eventSink)
 
   return registry
 }
@@ -99,15 +130,7 @@ export function getWebCapabilities(
   registry: WebHandlerRegistry,
   host = '127.0.0.1'
 ): AckemWebCapabilities {
-  return {
-    runtime: 'web',
-    singleUser: true,
-    localOnly: isLoopbackHost(host),
-    invokePath: ACKEM_WEB_INVOKE_PATH,
-    eventsPath: ACKEM_WEB_EVENTS_PATH,
-    channels: [...registry.keys()].sort(),
-    unsupportedChannels: [...WEB_UNSUPPORTED_CHANNELS],
-  }
+  return buildWebCapabilities(registry, isLoopbackHost(host))
 }
 
 export function isInvokeRequest(value: unknown): value is AckemWebInvokeRequest {
@@ -124,6 +147,23 @@ function normalizeInvokeError(error: unknown): AckemWebInvokeError {
         ? err.message
         : String(error || 'Unknown invoke error'),
     code: typeof err?.code === 'string' ? err.code : undefined,
+    channel: typeof (err as { channel?: unknown })?.channel === 'string' ? (err as { channel: string }).channel : undefined,
+    status:
+      (err as { status?: unknown })?.status === 'supported' ||
+      (err as { status?: unknown })?.status === 'electronWindowOnly' ||
+      (err as { status?: unknown })?.status === 'pending'
+        ? ((err as { status: AckemWebInvokeError['status'] }).status)
+        : undefined,
+    replacement:
+      typeof (err as { replacement?: unknown })?.replacement === 'string'
+        ? (err as { replacement: string }).replacement
+        : undefined,
+    details:
+      (err as { details?: unknown })?.details &&
+      typeof (err as { details?: unknown }).details === 'object' &&
+      !Array.isArray((err as { details?: unknown }).details)
+        ? ((err as { details: Record<string, unknown> }).details)
+        : undefined,
     stack:
       process.env.NODE_ENV === 'production'
         ? undefined
@@ -139,6 +179,14 @@ export async function invokeWebHandler(
 ): Promise<AckemWebInvokeResponse> {
   const handler = registry.get(request.channel)
   if (!handler) {
+    const contract = findWebChannelContract(request.channel)
+    if (contract && contract.status !== 'supported') {
+      return {
+        ok: false,
+        id: request.id,
+        error: normalizeInvokeError(createWebChannelError(request.channel, contract.status)),
+      }
+    }
     return {
       ok: false,
       id: request.id,

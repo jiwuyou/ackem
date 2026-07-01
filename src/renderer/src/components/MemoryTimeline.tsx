@@ -3,6 +3,7 @@ import { formatConfidencePercent } from '../../../shared/confidence'
 import { useAppStore } from '../store/appStore'
 import { ConfirmDialog } from './ConfirmDialog'
 import { t } from '../lib/i18n'
+import { ackemClient } from '../api'
 
 type MemoryFact = {
   id: string
@@ -40,7 +41,7 @@ export function MemoryTimeline(): JSX.Element {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const list = await window.ackem.memoryList() as MemoryFact[]
+      const list = await ackemClient.memoryList() as MemoryFact[]
       setFacts(list)
     } catch { /* ignore */ }
     finally { setLoading(false) }
@@ -49,7 +50,7 @@ export function MemoryTimeline(): JSX.Element {
   useEffect(() => { void load() }, [load])
 
   useEffect(() => {
-    const off = window.ackem.onMemoryUpdated?.(() => {
+    const off = ackemClient.onMemoryUpdated(() => {
       void load()
     })
     return () => off?.()
@@ -61,14 +62,14 @@ export function MemoryTimeline(): JSX.Element {
 
   const confirmRetire = async () => {
     if (!retireTarget) return
-    await window.ackem.memoryRetire(retireTarget.id)
+    await ackemClient.memoryRetire(retireTarget.id)
     setRetireTarget(null)
     await load()
   }
 
   const handleUpdate = async (id: string) => {
     if (!editSummary.trim()) return
-    await window.ackem.memoryUpdate(id, { summary: editSummary })
+    await ackemClient.memoryUpdate(id, { summary: editSummary })
     setEditId(null)
     await load()
   }
@@ -79,10 +80,10 @@ export function MemoryTimeline(): JSX.Element {
 
   const confirmArchive = async () => {
     setShowArchiveDialog(false)
-    await window.ackem.memoryClearAll()
+    await ackemClient.memoryClearAll()
     useAppStore.getState().resetChat()
-    await window.ackem.saveChatHistory([])
-    await window.ackem.appReload()
+    await ackemClient.saveChatHistory([])
+    await ackemClient.appReload()
   }
 
   const cancelArchive = () => {
@@ -179,13 +180,13 @@ export function MemoryTimeline(): JSX.Element {
                       <div className="flex gap-1">
                         <button
                           type="button"
-                          onClick={async () => { await window.ackem.memoryFeedback(f.id, 'thumbs_up'); await load() }}
+                          onClick={async () => { await ackemClient.memoryFeedback(f.id, 'thumbs_up'); await load() }}
                           title={t('timeline.useful')}
                           className="memory-action-btn memory-action-btn--success px-2 py-0.5"
                         >👍</button>
                         <button
                           type="button"
-                          onClick={async () => { await window.ackem.memoryFeedback(f.id, 'thumbs_down'); await load() }}
+                          onClick={async () => { await ackemClient.memoryFeedback(f.id, 'thumbs_down'); await load() }}
                           title={t('timeline.wrong')}
                           className="memory-action-btn memory-action-btn--warn px-2 py-0.5"
                         >👎</button>

@@ -15,6 +15,7 @@ import {
   type PermissionRequestPayload
 } from '../../../shared/openforuPermissions'
 import { ExperimentalFeatureBadge, ExperimentalFeatureNotice } from './settings/settingsUi'
+import { ackemClient } from '../api'
 
 type Tab = 'plugins' | 'skills' | 'user-plugins' | 'user-skills' | 'workspace'
 
@@ -98,7 +99,7 @@ async function loadUserExtensions(sk: ExtRow[], pl: ExtRow[]): Promise<{
   userPlugins: ExtensionItem[]
 }> {
   try {
-    const ofuExt = await window.ackem.openforu.listExtensions()
+    const ofuExt = await ackemClient.openForuListExtensions()
     const fromOpenForU = {
       userSkills: sortExtensions(ofuExt.uskills.map(mapOpenForURow)),
       userPlugins: sortExtensions(ofuExt.uplugins.map(mapOpenForURow))
@@ -118,6 +119,13 @@ async function loadUserExtensions(sk: ExtRow[], pl: ExtRow[]): Promise<{
       pl.filter((p) => isUserExtensionId(p.manifest.id)).map((p) => mapRegistryRowAsUser(p, 'uplugin'))
     )
   }
+}
+
+function describeWebPending(action: string, error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  const message = raw.replace(/^Ackem Web API /, '').trim()
+  if (ackemClient.capabilities().runtime !== 'web') return message
+  return `${action} 的 Web 后端能力暂不可用：${message}`
 }
 
 function sortExtensions(items: ExtensionItem[]): ExtensionItem[] {
@@ -251,6 +259,7 @@ export function ExtensionCenterPage(): JSX.Element {
   const setAppTab = useAppStore((s) => s.setTab)
   const pushToast = useAppStore((s) => s.pushToast)
   const openforuReady = isOpenForUConfigured(settings)
+  const canOpenSurfaceWindow = ackemClient.capabilities().desktopUi
 
   const grantPayload: PermissionRequestPayload | null = useMemo(() => {
     if (!grantItem?.pendingPermissions?.length) return null
@@ -277,7 +286,7 @@ export function ExtensionCenterPage(): JSX.Element {
         return
       }
       try {
-        const r = await window.ackem.openforu.planRefineOpen(item.id, { displayName: item.name })
+        const r = await ackemClient.openForuPlanRefineOpen(item.id, { displayName: item.name })
         if (r.ok) {
           bumpPlanReload()
           setPlanOpen(true)
@@ -286,7 +295,7 @@ export function ExtensionCenterPage(): JSX.Element {
           pushToast(r.error ?? '无法打开 Plan 工作区')
         }
       } catch (e) {
-        pushToast(e instanceof Error ? e.message : String(e))
+        pushToast(describeWebPending('继续优化', e))
       }
     },
     [openforuReady, pushToast, setAppTab, bumpPlanReload, setPlanOpen]
@@ -296,13 +305,13 @@ export function ExtensionCenterPage(): JSX.Element {
     setLoading(true)
     setToggleError(null)
     try {
-      const pl = (await window.ackem.ext.plugins.list()) as ExtRow[]
+      const pl = (await ackemClient.extPluginsList()) as ExtRow[]
       setPlugins(
         sortExtensions(
           pl.filter((p) => !isUserExtensionId(p.manifest.id)).map((p) => mapRow(p, false))
         )
       )
-      const sk = (await window.ackem.ext.skills.list()) as ExtRow[]
+      const sk = (await ackemClient.extSkillsList()) as ExtRow[]
       setSkills(
         sortExtensions(
           sk.filter((s) => !isUserExtensionId(s.manifest.id)).map((s) => mapRow(s, true))
@@ -313,8 +322,8 @@ export function ExtensionCenterPage(): JSX.Element {
       setUserSkills(userExt.userSkills)
       setUserPlugins(userExt.userPlugins)
 
-      if (openforuReady && window.ackem.openforu.workspaces?.list) {
-        const ws = await window.ackem.openforu.workspaces.list()
+      if (openforuReady) {
+        const ws = await ackemClient.openForuWorkspacesList()
         if (ws.ok) {
           setWorkspaces(ws.workspaces)
           setWorkspaceMax(ws.max)
@@ -324,6 +333,15 @@ export function ExtensionCenterPage(): JSX.Element {
         setWorkspaces([])
         setActiveWorkspaceId(null)
       }
+    } catch (e) {
+      const message = describeWebPending('扩展中心', e)
+      setToggleError(message)
+      setPlugins([])
+      setSkills([])
+      setUserSkills([])
+      setUserPlugins([])
+      setWorkspaces([])
+      setActiveWorkspaceId(null)
     } finally {
       setLoading(false)
     }
@@ -340,34 +358,42 @@ export function ExtensionCenterPage(): JSX.Element {
   }, [tab, load])
 
   useEffect(() => {
-    const unsubscribe = window.ackem.openforu.onNotify(() => {
+    const unsubscribe = ackemClient.openForuOnNotify(() => {
       void load()
     })
-    return unsubscribe
+    return () => unsubscribe?.()
   }, [load])
 
   const togglePlugin = async (id: string, active: boolean) => {
     setToggleError(null)
-    const res = (await (active
-      ? window.ackem.ext.plugins.activate(id)
-      : window.ackem.ext.plugins.deactivate(id))) as { ok: boolean; error?: string }
-    if (!res.ok) {
-      setToggleError(res.error ?? '操作失败')
-      return
+    try {
+      const res = (await (active
+        ? ackemClient.extPluginsActivate(id)
+        : ackemClient.extPluginsDeactivate(id))) as { ok: boolean; error?: string }
+      if (!res.ok) {
+        setToggleError(res.error ?? '操作失败')
+        return
+      }
+      await load()
+    } catch (e) {
+      setToggleError(describeWebPending('插件启停', e))
     }
-    await load()
   }
 
   const toggleSkill = async (id: string, active: boolean) => {
     setToggleError(null)
-    const res = (await (active
-      ? window.ackem.ext.skills.activate(id)
-      : window.ackem.ext.skills.deactivate(id))) as { ok: boolean; error?: string }
-    if (!res.ok) {
-      setToggleError((res as { error?: string }).error ?? '操作失败')
-      return
+    try {
+      const res = (await (active
+        ? ackemClient.extSkillsActivate(id)
+        : ackemClient.extSkillsDeactivate(id))) as { ok: boolean; error?: string }
+      if (!res.ok) {
+        setToggleError((res as { error?: string }).error ?? '操作失败')
+        return
+      }
+      await load()
+    } catch (e) {
+      setToggleError(describeWebPending('Skill 启停', e))
     }
-    await load()
   }
 
   const removeUserExtension = async (item: ExtensionItem) => {
@@ -375,15 +401,19 @@ export function ExtensionCenterPage(): JSX.Element {
     const label = item.origin === 'uskill' ? 'Skill' : '插件'
     if (!window.confirm(`确定删除自创${label}「${item.name}」？\n\n将删除磁盘文件且不可恢复。`)) return
     setToggleError(null)
-    const res = await window.ackem.openforu.removeExtension(item.origin, item.id)
-    if (!res.ok) {
-      setToggleError(res.error ?? '删除失败')
-      return
+    try {
+      const res = await ackemClient.openForuRemoveExtension(item.origin, item.id)
+      if (!res.ok) {
+        setToggleError(res.error ?? '删除失败')
+        return
+      }
+      if (tab === 'user-skills' && selectedUserSkillId === item.id) setSelectedUserSkillId(null)
+      if (tab === 'user-plugins' && selectedUserPluginId === item.id) setSelectedUserPluginId(null)
+      pushToast(`已删除 ${item.name}`)
+      await load()
+    } catch (e) {
+      setToggleError(describeWebPending('删除自创扩展', e))
     }
-    if (tab === 'user-skills' && selectedUserSkillId === item.id) setSelectedUserSkillId(null)
-    if (tab === 'user-plugins' && selectedUserPluginId === item.id) setSelectedUserPluginId(null)
-    pushToast(`已删除 ${item.name}`)
-    await load()
   }
 
   const selection = useMemo(() => {
@@ -521,14 +551,18 @@ export function ExtensionCenterPage(): JSX.Element {
                   type="button"
                   className="rounded-lg border border-glass-border px-4 py-2 text-sm text-ink hover:border-accent/40"
                   onClick={async () => {
-                    const r = await window.ackem.openforu.workspaces.create()
-                    if (r.ok) {
-                      setWorkspaces(r.workspaces)
-                      setActiveWorkspaceId(r.activeWorkspaceId)
-                      if (r.evicted) {
-                        pushToast(`已达上限，已移除「${r.evicted.name}」`)
+                    try {
+                      const r = await ackemClient.openForuWorkspacesCreate()
+                      if (r.ok) {
+                        setWorkspaces(r.workspaces)
+                        setActiveWorkspaceId(r.activeWorkspaceId)
+                        if (r.evicted) {
+                          pushToast(`已达上限，已移除「${r.evicted.name}」`)
+                        }
+                        setPlanOpen(true)
                       }
-                      setPlanOpen(true)
+                    } catch (e) {
+                      setToggleError(describeWebPending('新建 OpenForU 工作区', e))
                     }
                   }}
                 >
@@ -555,11 +589,15 @@ export function ExtensionCenterPage(): JSX.Element {
                       type="button"
                       className="shrink-0 rounded-lg border border-glass-border px-3 py-1.5 text-xs text-ink hover:border-accent/40"
                       onClick={async () => {
-                        const r = await window.ackem.openforu.workspaces.switch(w.id)
-                        if (r.ok) {
-                          setActiveWorkspaceId(r.activeWorkspaceId)
-                          setWorkspaces(r.workspaces)
-                          setPlanOpen(true)
+                        try {
+                          const r = await ackemClient.openForuWorkspacesSwitch(w.id)
+                          if (r.ok) {
+                            setActiveWorkspaceId(r.activeWorkspaceId)
+                            setWorkspaces(r.workspaces)
+                            setPlanOpen(true)
+                          }
+                        } catch (e) {
+                          setToggleError(describeWebPending('切换 OpenForU 工作区', e))
                         }
                       }}
                     >
@@ -570,12 +608,16 @@ export function ExtensionCenterPage(): JSX.Element {
                       className="shrink-0 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs text-red-300 hover:border-red-400/50"
                       onClick={async () => {
                         if (!window.confirm(`删除工作区「${w.name}」？`)) return
-                        const r = await window.ackem.openforu.workspaces.delete(w.id)
-                        if (r.ok) {
-                          setWorkspaces(r.workspaces)
-                          setActiveWorkspaceId(r.activeWorkspaceId)
-                          pushToast('已删除')
-                          void load()
+                        try {
+                          const r = await ackemClient.openForuWorkspacesDelete(w.id)
+                          if (r.ok) {
+                            setWorkspaces(r.workspaces)
+                            setActiveWorkspaceId(r.activeWorkspaceId)
+                            pushToast('已删除')
+                            void load()
+                          }
+                        } catch (e) {
+                          setToggleError(describeWebPending('删除 OpenForU 工作区', e))
                         }
                       }}
                     >
@@ -626,7 +668,9 @@ export function ExtensionCenterPage(): JSX.Element {
                   !selection.selectedId &&
                   listForTab.length > 0 && (
                     <p className="mb-4 text-xs text-ink-muted">
-                      点击扩展卡片展开详情，可使用「打开窗口」「继续优化」等操作。
+                      {canOpenSurfaceWindow
+                        ? '点击扩展卡片展开详情，可使用「打开窗口」「继续优化」等操作。'
+                        : '点击扩展卡片展开详情，可使用「继续优化」等 Web 可用操作。'}
                     </p>
                   )}
                 <ExtensionGrid
@@ -656,15 +700,21 @@ export function ExtensionCenterPage(): JSX.Element {
         payload={grantPayload}
         onApprove={() => {
           if (!grantItem) return
-          void window.ackem.openforu.permissions.approveAndActivate(grantItem.id).then((r) => {
-            setGrantItem(null)
-            if (r.ok) {
-              pushToast('已授予权限并启用')
-              void load()
-            } else {
-              setToggleError(r.error ?? '授权失败')
-            }
-          })
+          void ackemClient
+            .openForuApproveAndActivate(grantItem.id)
+            .then((r) => {
+              setGrantItem(null)
+              if (r.ok) {
+                pushToast('已授予权限并启用')
+                void load()
+              } else {
+                setToggleError(r.error ?? '授权失败')
+              }
+            })
+            .catch((e: unknown) => {
+              setGrantItem(null)
+              setToggleError(describeWebPending('OpenForU 授权', e))
+            })
         }}
         onDeny={() => setGrantItem(null)}
       />

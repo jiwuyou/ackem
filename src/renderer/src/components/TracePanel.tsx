@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { t } from '../lib/i18n'
+import { ackemClient } from '../api'
 
 type TraceEntry = {
   turn: number
@@ -40,7 +41,7 @@ export function TracePanel(): JSX.Element {
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const raw = await window.ackem.traceLatest(limit) as TraceEntry[]
+      const raw = await ackemClient.traceLatest(limit) as TraceEntry[]
       setTraces(raw)
     } catch (e) {
       console.error('trace:latest error', e)

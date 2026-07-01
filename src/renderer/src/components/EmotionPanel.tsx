@@ -7,6 +7,7 @@ import { EmotionStarMap } from './EmotionStarMap'
 import { LightCore } from './LightCore'
 import type { UserSixDimensions } from '../ackem'
 import { formatDispatchTriggerLabel } from '../../../shared/dispatchTrigger'
+import { ackemClient } from '../api'
 
 type EngineState = {
   relationship: { stage: string; trust: number; rifts: number; atmosphere: string }
@@ -114,8 +115,8 @@ export function EmotionPanel(): JSX.Element {
     setError(null)
     try {
       const [s, profile] = await Promise.all([
-        window.ackem.getState() as Promise<EngineState>,
-        window.ackem.profileGet()
+        ackemClient.getState() as Promise<EngineState>,
+        ackemClient.profileGet()
       ])
       setState(s)
       setProfileMode(profile.mode)
@@ -214,11 +215,11 @@ export function EmotionPanel(): JSX.Element {
             <DesireStackView
               stack={s.desireStack}
               onDismiss={async (desireId) => {
-                await window.ackem.desireDismiss(desireId)
+                await ackemClient.desireDismiss(desireId)
                 void refresh()
               }}
               onClearActive={async () => {
-                await window.ackem.desireClearActive()
+                await ackemClient.desireClearActive()
                 void refresh()
               }}
             />
