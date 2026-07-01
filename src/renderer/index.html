@@ -3,6 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f0d14" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Ackem" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/ackem-512.png" />
     <title>Ackem</title>
     <style>
       html,
@@ -45,6 +51,13 @@
   <body class="bg-surface text-ink antialiased">
     <div id="ackem-boot-splash" aria-live="polite" aria-busy="true"></div>
     <div id="root"></div>
+    <script>
+      if ('serviceWorker' in navigator && /^https?:$/.test(window.location.protocol)) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {})
+        })
+      }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

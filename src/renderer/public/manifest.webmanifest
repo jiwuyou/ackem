@@ -1,0 +1,19 @@
+{
+  "name": "Ackem",
+  "short_name": "Ackem",
+  "description": "Ackem local web runtime",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f0d14",
+  "theme_color": "#0f0d14",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icons/ackem-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
