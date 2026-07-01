@@ -58,6 +58,11 @@ type OpenForUWorkspaceDeleteResult = Awaited<ReturnType<AckemApi['openforu']['wo
 type OpenForURemoveExtensionResult = Awaited<ReturnType<AckemApi['openforu']['removeExtension']>>
 type OpenForUApproveAndActivateResult = Awaited<ReturnType<AckemApi['openforu']['permissions']['approveAndActivate']>>
 type OpenForUOpenSurfaceWindowResult = Awaited<ReturnType<AckemApi['openforu']['openSurfaceWindow']>>
+type WeixinStatus = Awaited<ReturnType<AckemApi['weixinGetStatus']>>
+type WeixinStartLoginResult = Awaited<ReturnType<AckemApi['weixinStartLogin']>>
+type WeixinPollLoginArgs = Parameters<AckemApi['weixinPollLogin']>[0]
+type WeixinPollLoginResult = Awaited<ReturnType<AckemApi['weixinPollLogin']>>
+type WeixinSubmitVerifyCodeArgs = Parameters<AckemApi['weixinSubmitVerifyCode']>[0]
 
 export type AckemClient = {
   capabilities: () => AckemRuntimeCapabilities
@@ -146,6 +151,15 @@ export type AckemClient = {
   sessionSwitch: (sessionId: string) => Promise<SessionSwitchResult>
   sessionDelete: (sessionId: string) => Promise<SessionDeleteResult>
   appReload: () => Promise<{ ok: boolean }>
+  weixinGetStatus: () => Promise<WeixinStatus>
+  weixinStartLogin: () => Promise<WeixinStartLoginResult>
+  weixinPollLogin: (args: WeixinPollLoginArgs) => Promise<WeixinPollLoginResult>
+  weixinSubmitVerifyCode: (args: WeixinSubmitVerifyCodeArgs) => Promise<WeixinPollLoginResult>
+  weixinDisconnect: () => Promise<{ ok: boolean }>
+  weixinSetEnabled: (enabled: boolean) => Promise<WeixinStatus>
+  weixinSetProactiveEnabled: (enabled: boolean) => Promise<WeixinStatus>
+  weixinRestart: () => Promise<WeixinStatus>
+  onWeixinStatusChanged: (fn: (status: WeixinStatus) => void) => MaybeUnsubscribe
   onEmbeddingReadinessChanged: (fn: (snap: EmbeddingReadiness) => void) => MaybeUnsubscribe
   onEmbeddingDownloadProgress: (fn: (payload: { modelId: string; bytes: number; total: number; speed: number }) => void) => MaybeUnsubscribe
   onMemoryUpdated: (fn: (payload: MemoryUpdatedPayload) => void) => MaybeUnsubscribe
@@ -224,6 +238,14 @@ const channelMethodMap: Record<string, keyof Pick<
   | 'sessionSwitch'
   | 'sessionDelete'
   | 'appReload'
+  | 'weixinGetStatus'
+  | 'weixinStartLogin'
+  | 'weixinPollLogin'
+  | 'weixinSubmitVerifyCode'
+  | 'weixinDisconnect'
+  | 'weixinSetEnabled'
+  | 'weixinSetProactiveEnabled'
+  | 'weixinRestart'
 >> = {
   'settings:get': 'getSettings',
   'settings:set': 'setSettings',
@@ -281,7 +303,15 @@ const channelMethodMap: Record<string, keyof Pick<
   'session:create': 'sessionCreate',
   'session:switch': 'sessionSwitch',
   'session:delete': 'sessionDelete',
-  'app:reload': 'appReload'
+  'app:reload': 'appReload',
+  'weixin:getStatus': 'weixinGetStatus',
+  'weixin:startLogin': 'weixinStartLogin',
+  'weixin:pollLogin': 'weixinPollLogin',
+  'weixin:submitVerifyCode': 'weixinSubmitVerifyCode',
+  'weixin:disconnect': 'weixinDisconnect',
+  'weixin:setEnabled': 'weixinSetEnabled',
+  'weixin:setProactiveEnabled': 'weixinSetProactiveEnabled',
+  'weixin:restart': 'weixinRestart'
 }
 
 function electronInvoke<T>(api: AckemApi, channel: string, args: unknown[]): Promise<T> {
@@ -494,6 +524,16 @@ export const ackemClient: AckemClient = {
     window.location.reload()
     return { ok: true }
   },
+  weixinGetStatus: () => invoke<WeixinStatus>('weixin:getStatus'),
+  weixinStartLogin: () => invoke<WeixinStartLoginResult>('weixin:startLogin'),
+  weixinPollLogin: (args) => invoke<WeixinPollLoginResult>('weixin:pollLogin', [args]),
+  weixinSubmitVerifyCode: (args) => invoke<WeixinPollLoginResult>('weixin:submitVerifyCode', [args]),
+  weixinDisconnect: () => invoke<{ ok: boolean }>('weixin:disconnect'),
+  weixinSetEnabled: (enabled) => invoke<WeixinStatus>('weixin:setEnabled', [enabled]),
+  weixinSetProactiveEnabled: (enabled) => invoke<WeixinStatus>('weixin:setProactiveEnabled', [enabled]),
+  weixinRestart: () => invoke<WeixinStatus>('weixin:restart'),
+  onWeixinStatusChanged: (fn) =>
+    subscribe<WeixinStatus>('weixin:status-changed', (api) => api.onWeixinStatusChanged?.(fn), fn),
   onEmbeddingReadinessChanged: (fn) =>
     subscribe<EmbeddingReadiness>(
       'embedding:readiness-changed',
@@ -638,6 +678,16 @@ function createWebAckemShim(): AckemApi {
     sessionSwitch: ackemClient.sessionSwitch,
     sessionDelete: ackemClient.sessionDelete,
     appReload: ackemClient.appReload,
+    weixinGetStatus: ackemClient.weixinGetStatus,
+    weixinStartLogin: ackemClient.weixinStartLogin,
+    weixinPollLogin: ackemClient.weixinPollLogin,
+    weixinSubmitVerifyCode: ackemClient.weixinSubmitVerifyCode,
+    weixinDisconnect: ackemClient.weixinDisconnect,
+    weixinSetEnabled: ackemClient.weixinSetEnabled,
+    weixinSetProactiveEnabled: ackemClient.weixinSetProactiveEnabled,
+    weixinRestart: ackemClient.weixinRestart,
+    onWeixinStatusChanged: (fn) =>
+      ackemClient.onWeixinStatusChanged(fn as (status: WeixinStatus) => void) ?? noOpUnsubscribe,
     onChatStreamStart: ackemClient.onChatStreamStart,
     onChatWaveStart: ackemClient.onChatWaveStart,
     onChatChunk: ackemClient.onChatChunk,
