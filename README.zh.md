@@ -214,6 +214,7 @@ npm run test:renderer
 | AI 上下文与检索 | [ai-context-and-retrieval-policy.md](./docs/ai-context-and-retrieval-policy.md) | [ai-context-and-retrieval-policy.zh.md](./docs/ai-context-and-retrieval-policy.zh.md) |
 | 隐私与数据处理 | [privacy-and-data.md](./docs/privacy-and-data.md) | [privacy-and-data.zh.md](./docs/privacy-and-data.zh.md) |
 | 本地模型配置 | [local-models-windows.md](./docs/local-models-windows.md) | [local-models-windows.zh.md](./docs/local-models-windows.zh.md) |
+| OpenHouseAI service-manager 部署 | [openhouse-service-manager.md](./docs/openhouse-service-manager.md) | [openhouse-service-manager.zh.md](./docs/openhouse-service-manager.zh.md) |
 | 成人模式与安全 | [adult-and-safety-policy.md](./docs/adult-and-safety-policy.md) | [adult-and-safety-policy.zh.md](./docs/adult-and-safety-policy.zh.md) |
 | 感知能力 | [perception-layer.md](./docs/perception-layer.md) | [perception-layer.zh.md](./docs/perception-layer.zh.md) |
 | 敏感能力 | [sensitive-capabilities.md](./docs/sensitive-capabilities.md) | [sensitive-capabilities.zh.md](./docs/sensitive-capabilities.zh.md) |

@@ -214,6 +214,7 @@ Index: [docs/developer/architecture/README.md](./docs/developer/architecture/REA
 | AI context & retrieval | [ai-context-and-retrieval-policy.md](./docs/ai-context-and-retrieval-policy.md) | [ai-context-and-retrieval-policy.zh.md](./docs/ai-context-and-retrieval-policy.zh.md) |
 | Privacy & data | [privacy-and-data.md](./docs/privacy-and-data.md) | [privacy-and-data.zh.md](./docs/privacy-and-data.zh.md) |
 | Local models | [local-models-windows.md](./docs/local-models-windows.md) | [local-models-windows.zh.md](./docs/local-models-windows.zh.md) |
+| OpenHouseAI service-manager deployment | [openhouse-service-manager.md](./docs/openhouse-service-manager.md) | [openhouse-service-manager.zh.md](./docs/openhouse-service-manager.zh.md) |
 | Adult mode & safety | [adult-and-safety-policy.md](./docs/adult-and-safety-policy.md) | [adult-and-safety-policy.zh.md](./docs/adult-and-safety-policy.zh.md) |
 | Perception | [perception-layer.md](./docs/perception-layer.md) | [perception-layer.zh.md](./docs/perception-layer.zh.md) |
 | Sensitive capabilities | [sensitive-capabilities.md](./docs/sensitive-capabilities.md) | [sensitive-capabilities.zh.md](./docs/sensitive-capabilities.zh.md) |
