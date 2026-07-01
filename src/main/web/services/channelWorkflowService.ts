@@ -13,19 +13,20 @@ import {
   loadWebSettings,
   saveWebSettings,
 } from '../runtime'
-import type { WebHandlerRegistry, WebInvokeHandler } from '../types'
+import type { WebEventSink, WebHandlerRegistry, WebInvokeHandler } from '../types'
+import {
+  clearWebWeixinRuntimeError,
+  configureWebWeixinRuntime,
+  getWebWeixinRuntimeStatus,
+  onWebWeixinAccountSaved,
+  restartWebWeixinChannel,
+  setWebWeixinRuntimeError,
+  startWebWeixinChannel,
+  stopWebWeixinChannel,
+  type WebWeixinRuntimeStatus,
+} from './weixinRuntimeService'
 
-type WebWeixinStatus = {
-  connected: boolean
-  enabled: boolean
-  polling: boolean
-  proactiveEnabled: boolean
-  accountId?: string
-  userId?: string
-  lastError?: string | null
-  tokenExpired: boolean
-  embeddingReady?: boolean
-}
+type WebWeixinStatus = WebWeixinRuntimeStatus & { embeddingReady?: boolean }
 
 type WebTimeOfDay = 'morning' | 'forenoon' | 'afternoon' | 'evening' | 'night' | 'late_night'
 type WebPresenceMode = 'active' | 'quiet' | 'sleeping'
@@ -194,18 +195,11 @@ function mutateChannelState(fn: (state: WebChannelState) => WebChannelState | vo
   return saveChannelState(root, next)
 }
 
-function webWeixinStatus(state = loadChannelState()): WebWeixinStatus {
+function webWeixinStatus(): WebWeixinStatus {
   const settings = loadWebSettings()
-  const account = loadWeixinAccount(rootWithLayout())
+  const status = getWebWeixinRuntimeStatus(rootWithLayout())
   return {
-    connected: Boolean(account?.token),
-    enabled: settings.weixinChannelEnabled === true,
-    polling: false,
-    proactiveEnabled: settings.weixinProactiveEnabled !== false,
-    accountId: account?.accountId,
-    userId: account?.userId,
-    lastError: state.weixin.lastError,
-    tokenExpired: state.weixin.tokenExpired,
+    ...status,
     embeddingReady: settings.embeddingActiveModel !== 'none',
   }
 }
@@ -229,7 +223,7 @@ function normalizeWeixinPollArgs(args: unknown): {
   return { qrcode, verifyCode, baseUrl }
 }
 
-function markWeixinPollResult(result: LoginPollResult): LoginPollResult {
+async function markWeixinPollResult(root: string, result: LoginPollResult): Promise<LoginPollResult> {
   mutateChannelState((state) => {
     state.weixin.lastPollAt = new Date().toISOString()
     state.weixin.lastError = result.ok ? null : result.error ?? null
@@ -237,6 +231,7 @@ function markWeixinPollResult(result: LoginPollResult): LoginPollResult {
   })
   if (result.ok && result.account) {
     saveWebSettings({ weixinChannelEnabled: true })
+    await onWebWeixinAccountSaved(root)
   }
   return result
 }
@@ -434,55 +429,80 @@ export async function handleWebWeixinPollLogin(args: unknown): Promise<LoginPoll
   const root = rootWithLayout()
   const payload = normalizeWeixinPollArgs(args)
   const result = await pollWeixinLogin(root, payload.qrcode, payload.verifyCode, payload.baseUrl)
-  return markWeixinPollResult(result)
+  return markWeixinPollResult(root, result)
 }
 
 export async function handleWebWeixinSubmitVerifyCode(args: unknown): Promise<LoginPollResult> {
   const root = rootWithLayout()
   const payload = normalizeWeixinPollArgs(args)
   const result = await pollWeixinLogin(root, payload.qrcode, payload.verifyCode, payload.baseUrl)
-  return markWeixinPollResult(result)
+  return markWeixinPollResult(root, result)
 }
 
-export function handleWebWeixinDisconnect(): { ok: boolean } {
-  disconnectWeixin(rootWithLayout())
+export async function handleWebWeixinDisconnect(): Promise<{ ok: boolean }> {
+  const root = rootWithLayout()
+  await stopWebWeixinChannel(root)
+  disconnectWeixin(root)
   saveWebSettings({ weixinChannelEnabled: false })
   mutateChannelState((state) => {
     state.weixin.lastError = null
     state.weixin.tokenExpired = false
   })
+  clearWebWeixinRuntimeError(root)
   return { ok: true }
 }
 
-export function handleWebWeixinSetEnabled(enabled: unknown): WebWeixinStatus {
+export async function handleWebWeixinSetEnabled(enabled: unknown): Promise<WebWeixinStatus> {
   const next = enabled === true
+  const root = rootWithLayout()
   saveWebSettings({ weixinChannelEnabled: next })
-  const state = mutateChannelState((draft) => {
-    draft.weixin.lastError = next && !loadWeixinAccount(rootWithLayout()) ? 'weixin_account_not_bound' : null
+  const account = loadWeixinAccount(root)
+  if (next && account) {
+    await startWebWeixinChannel(root)
+  } else {
+    await stopWebWeixinChannel(root)
+  }
+  mutateChannelState((draft) => {
+    draft.weixin.lastError = next && !account ? 'weixin_account_not_bound' : null
     draft.weixin.tokenExpired = false
   })
-  return webWeixinStatus(state)
+  if (next && !account) {
+    setWebWeixinRuntimeError(root, 'weixin_account_not_bound')
+  } else if (!next) {
+    clearWebWeixinRuntimeError(root)
+  }
+  return webWeixinStatus()
 }
 
 export function handleWebWeixinSetProactiveEnabled(enabled: unknown): WebWeixinStatus {
   const next = enabled !== false
+  const root = rootWithLayout()
   saveWebSettings({ weixinProactiveEnabled: next })
-  const state = mutateChannelState((draft) => {
+  mutateChannelState((draft) => {
     draft.weixin.lastError = draft.weixin.lastError ?? null
   })
-  return webWeixinStatus(state)
+  return webWeixinStatus()
 }
 
-export function handleWebWeixinRestart(): WebWeixinStatus {
-  const state = mutateChannelState((draft) => {
+export async function handleWebWeixinRestart(): Promise<WebWeixinStatus> {
+  const root = rootWithLayout()
+  const enabled = loadWebSettings().weixinChannelEnabled === true
+  if (enabled && loadWeixinAccount(root)) {
+    await restartWebWeixinChannel(root)
+  } else {
+    await stopWebWeixinChannel(root)
+  }
+  mutateChannelState((draft) => {
     draft.weixin.lastRestartAt = new Date().toISOString()
-    draft.weixin.lastError =
-      loadWebSettings().weixinChannelEnabled === true && !loadWeixinAccount(rootWithLayout())
-        ? 'weixin_account_not_bound'
-        : null
+    draft.weixin.lastError = enabled && !loadWeixinAccount(root) ? 'weixin_account_not_bound' : null
     draft.weixin.tokenExpired = false
   })
-  return webWeixinStatus(state)
+  if (enabled && !loadWeixinAccount(root)) {
+    setWebWeixinRuntimeError(root, 'weixin_account_not_bound')
+  } else if (!enabled) {
+    clearWebWeixinRuntimeError(root)
+  }
+  return webWeixinStatus()
 }
 
 export function handleWebCompanionTimeContext(): WebTimeContext {
@@ -537,7 +557,16 @@ export const webChannelWorkflowHandlers: Readonly<Record<(typeof WEB_CHANNEL_WOR
   'companion:setConfig': (patch) => handleWebCompanionSetConfig(patch),
 }
 
-export function registerWebChannelWorkflowHandlers(registry: WebHandlerRegistry): void {
+export function registerWebChannelWorkflowHandlers(
+  registry: WebHandlerRegistry,
+  eventSink?: WebEventSink
+): void {
+  if (eventSink) configureWebWeixinRuntime(eventSink)
+  if (loadWebSettings().weixinChannelEnabled === true) {
+    void startWebWeixinChannel(rootWithLayout()).catch(() => {
+      /* status endpoint will surface the runtime error */
+    })
+  }
   for (const [channel, handler] of Object.entries(webChannelWorkflowHandlers)) {
     registry.set(channel, handler)
   }

@@ -114,7 +114,7 @@ export function createDefaultWebHandlerRegistry(eventSink: WebEventSink = defaul
   registerWebEmbeddingWorkflowHandlers(registry)
   registerWebSystemWorkflowHandlers(registry)
   registerWebVoiceWorkflowHandlers(registry)
-  registerWebChannelWorkflowHandlers(registry)
+  registerWebChannelWorkflowHandlers(registry, eventSink)
   registerWebExtensionWorkflowHandlers(registry)
   registerWebGamemodeWorkflowHandlers(registry)
   registerWebOpenForUWorkflowHandlers(registry, eventSink)
