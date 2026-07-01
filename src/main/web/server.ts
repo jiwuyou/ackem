@@ -37,6 +37,7 @@ const MIME_TYPES: Record<string, string> = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -45,6 +46,13 @@ const MIME_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
+}
+
+function cacheControlForStaticFile(ext: string): string {
+  if (['.html', '.js', '.mjs', '.css', '.json', '.webmanifest'].includes(ext)) {
+    return 'no-cache'
+  }
+  return 'public, max-age=31536000, immutable'
 }
 
 function hostnameFromHostHeader(hostHeader: string | undefined): string | null {
@@ -182,8 +190,7 @@ function serveStaticFile(
   res.statusCode = 200
   res.setHeader('content-type', MIME_TYPES[ext] ?? 'application/octet-stream')
   res.setHeader('content-length', stat.size)
-  if (ext === '.html') res.setHeader('cache-control', 'no-cache')
-  else res.setHeader('cache-control', 'public, max-age=31536000, immutable')
+  res.setHeader('cache-control', cacheControlForStaticFile(ext))
   if (req.method === 'HEAD') {
     res.end()
     return true
